@@ -22,26 +22,79 @@ class DNSResult:
     ipv4: tuple[str, ...]
     canonical_name: str | None
     resolver_results: dict[str, dict[str, Any]]
+    unroutable: bool = False
+
+
+def partition_public_unicast_ipv4(values: Any) -> tuple[list[str], list[str]]:
+    public: set[str] = set()
+    rejected: set[str] = set()
+
+    for value in values:
+        text = str(value)
+        try:
+            address = ipaddress.IPv4Address(text)
+        except ipaddress.AddressValueError:
+            rejected.add(text)
+            continue
+
+        normalized = str(address)
+        if address.is_global and not address.is_multicast:
+            public.add(normalized)
+        else:
+            rejected.add(normalized)
+
+    return (
+        sorted(public, key=ipaddress.ip_address),
+        sorted(rejected),
+    )
 
 
 def aggregate_resolver_results(results: dict[str, dict[str, Any]], negative_votes_required: int) -> DNSResult:
     ipv4: set[str] = set()
     canonical: list[str] = []
     negatives = 0
-    for result in results.values():
-        status = result.get("status")
+    non_global_votes = 0
+    normalized_results: dict[str, dict[str, Any]] = {}
+
+    for resolver, result in results.items():
+        normalized = dict(result)
+        status = normalized.get("status")
+
         if status == "OK":
-            ipv4.update(str(x) for x in result.get("ipv4", []))
-            if result.get("canonical_name"):
-                canonical.append(str(result["canonical_name"]))
+            public_ipv4, rejected_ipv4 = partition_public_unicast_ipv4(normalized.get("ipv4", []))
+            normalized["ipv4"] = public_ipv4
+
+            if rejected_ipv4:
+                existing_rejected = {str(x) for x in normalized.get("non_global_ipv4", [])}
+                normalized["non_global_ipv4"] = sorted(existing_rejected | set(rejected_ipv4))
+
+            if public_ipv4:
+                ipv4.update(public_ipv4)
+                if normalized.get("canonical_name"):
+                    canonical.append(str(normalized["canonical_name"]))
+            else:
+                normalized["status"] = "NON_GLOBAL_A" if rejected_ipv4 else "NO_A"
+                negatives += 1
+                if rejected_ipv4:
+                    non_global_votes += 1
+
+        elif status == "NON_GLOBAL_A":
+            negatives += 1
+            non_global_votes += 1
         elif status in {"NXDOMAIN", "NO_A"}:
             negatives += 1
+
+        normalized_results[resolver] = normalized
+
+    unroutable = not ipv4 and non_global_votes >= negative_votes_required
     aggregate = "OK" if ipv4 else "NEGATIVE" if negatives >= negative_votes_required else "TRANSIENT"
+
     return DNSResult(
         aggregate,
         tuple(sorted(ipv4, key=ipaddress.ip_address)),
         sorted(canonical)[0] if canonical else None,
-        results,
+        normalized_results,
+        unroutable,
     )
 
 
@@ -53,11 +106,30 @@ def query_one_resolver(host: str, nameserver: str, settings: DNSSettings) -> dic
     resolver.retry_servfail = True
     try:
         answer = resolver.resolve(host, "A", search=False)
-        return {
-            "status": "OK",
-            "ipv4": sorted({r.address for r in answer}),
-            "canonical_name": str(answer.canonical_name).rstrip(".").lower(),
-        }
+        raw_ipv4 = sorted({r.address for r in answer}, key=ipaddress.ip_address)
+        public_ipv4, rejected_ipv4 = partition_public_unicast_ipv4(raw_ipv4)
+        canonical_name = str(answer.canonical_name).rstrip(".").lower()
+
+        if public_ipv4:
+            result: dict[str, Any] = {
+                "status": "OK",
+                "ipv4": public_ipv4,
+                "canonical_name": canonical_name,
+            }
+            if rejected_ipv4:
+                result["non_global_ipv4"] = rejected_ipv4
+            return result
+
+        if rejected_ipv4:
+            return {
+                "status": "NON_GLOBAL_A",
+                "ipv4": [],
+                "non_global_ipv4": rejected_ipv4,
+                "canonical_name": canonical_name,
+                "detail": "A records exist, but none are public unicast IPv4 addresses",
+            }
+
+        return {"status": "NO_A", "ipv4": [], "canonical_name": canonical_name}
     except dns.resolver.NXDOMAIN:
         return {"status": "NXDOMAIN", "ipv4": []}
     except dns.resolver.NoAnswer:
@@ -95,6 +167,7 @@ def new_host_state(host: str, now: datetime, source: str, legacy_active: bool = 
         "canonical_name": None,
         "quarantined_at": None,
         "expired_at": None,
+        "safety_reason": None,
         "resolver_results": {},
     }
 
@@ -111,6 +184,7 @@ def normalize_dns_entry(state: dict[str, Any]) -> None:
     state.setdefault("negative_observations", 0)
     state.setdefault("consecutive_negative_checks", int(state.get("consecutive_negative_checks", 0)))
     state.setdefault("last_negative", state.get("last_failure"))
+    state.setdefault("safety_reason", None)
 
 
 def _negative_window(state: dict[str, Any], now: datetime, settings: DNSSettings) -> tuple[datetime, int]:
@@ -134,7 +208,7 @@ def apply_dns_result(state: dict[str, Any], result: DNSResult, now: datetime, se
             "status": "active", "last_success": stamp, "last_result": "OK",
             "negative_since": None, "negative_observations": 0, "consecutive_negative_checks": 0,
             "ever_validated": True, "ipv4": list(result.ipv4), "canonical_name": result.canonical_name,
-            "quarantined_at": None, "expired_at": None,
+            "quarantined_at": None, "expired_at": None, "safety_reason": None,
         })
         return old, "active"
 
@@ -151,6 +225,18 @@ def apply_dns_result(state: dict[str, Any], result: DNSResult, now: datetime, se
     state["consecutive_negative_checks"] = observations
     state["ipv4"] = []
     state["canonical_name"] = None
+    state["safety_reason"] = "NON_GLOBAL_A" if result.unroutable else None
+
+    # A hostname that was previously published but is now confirmed by at
+    # least negative_votes_required resolvers to have only non-global A
+    # records is unsafe for a public routing list. Remove it immediately from
+    # the public active file by quarantining it. A later public DNS OK revives
+    # it normally. Newly discovered/unvalidated names keep the normal pending
+    # lifecycle because they were never published.
+    if result.unroutable and state.get("ever_validated") and old != "quarantine":
+        state["status"] = "quarantine"
+        state["quarantined_at"] = stamp
+        return old, "quarantine"
 
     if old == "quarantine":
         quarantined_at = parse_iso(state.get("quarantined_at")) or now
@@ -229,6 +315,7 @@ def maintain_dns(
             hosts[host]["negative_since"] = None
             hosts[host]["negative_observations"] = 0
             hosts[host]["ever_validated"] = False
+            hosts[host]["safety_reason"] = None
         for source in sources:
             add_source(hosts[host], source)
 
