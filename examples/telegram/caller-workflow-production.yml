@@ -1,0 +1,31 @@
+name: DNS maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only; do not modify or commit files"
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    - cron: "17 5,11,17,23 * * *"
+      timezone: "Europe/Helsinki"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dns-maintenance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    uses: DKHNV/DNS-Maintenance/.github/workflows/reusable-maintenance.yml@v1.0.0
+    with:
+      config_path: dns-maintenance.json
+      collection: telegram
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      engine_ref: v1.0.0
+    secrets:
+      certspotter_api_key: ${{ secrets.CERTSPOTTER_API_KEY }}

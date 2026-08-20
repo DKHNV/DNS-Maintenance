@@ -1,0 +1,24 @@
+name: DNS maintenance v1 pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only; do not modify or commit files"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  maintain:
+    uses: DKHNV/DNS-Maintenance/.github/workflows/reusable-maintenance.yml@main
+    with:
+      config_path: dns-maintenance.json
+      collection: telegram
+      dry_run: ${{ inputs.dry_run }}
+      engine_ref: main
+    secrets:
+      certspotter_api_key: ${{ secrets.CERTSPOTTER_API_KEY }}
