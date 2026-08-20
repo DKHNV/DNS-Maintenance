@@ -27,8 +27,9 @@ on:
       certspotter_api_key:
         required: false
 
-permissions:
-  contents: write
+# GITHUB_TOKEN permissions are deliberately controlled by the caller.
+# A reusable workflow may keep or reduce caller permissions, but cannot elevate them.
+# Pilot callers use contents: read; production callers use contents: write.
 
 jobs:
   maintain:
