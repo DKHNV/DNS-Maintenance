@@ -28,12 +28,14 @@ on:
         required: false
 
 # GITHUB_TOKEN permissions are deliberately controlled by the caller.
-# A reusable workflow may keep or reduce caller permissions, but cannot elevate them.
 # Pilot callers use contents: read; production callers use contents: write.
 
 jobs:
   maintain:
     runs-on: ubuntu-latest
+    env:
+      ENGINE_ROOT: ${{ github.workspace }}/.dns-maintenance-engine
+
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@v7
@@ -57,13 +59,29 @@ jobs:
       - name: Install engine dependencies
         run: python -m pip install -r .dns-maintenance-engine/requirements.txt
 
+      - name: Verify engine import isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$ENGINE_ROOT" python -P - <<'PY'
+          from pathlib import Path
+          import dns_maintenance
+
+          loaded = Path(dns_maintenance.__file__).resolve()
+          expected = (Path.cwd() / ".dns-maintenance-engine" / "dns_maintenance").resolve()
+          print(f"Loaded engine package: {loaded}")
+          if expected not in loaded.parents:
+              raise SystemExit(f"Wrong dns_maintenance package loaded: {loaded}")
+          PY
+
       - name: Validate configuration
         shell: bash
         run: |
           set -euo pipefail
-          PYTHONPATH=.dns-maintenance-engine python - <<'PY'
+          PYTHONPATH="$ENGINE_ROOT" python -P - <<'PY'
           from pathlib import Path
           from dns_maintenance.config import load_config
+
           load_config(Path("${{ inputs.config_path }}"))
           print("Configuration is valid")
           PY
@@ -81,7 +99,7 @@ jobs:
           if [[ "${{ inputs.dry_run }}" == "true" ]]; then
             args+=(--dry-run)
           fi
-          PYTHONPATH=.dns-maintenance-engine python -m dns_maintenance "${args[@]}"
+          PYTHONPATH="$ENGINE_ROOT" python -P -m dns_maintenance "${args[@]}"
 
       - name: Capture managed paths
         if: ${{ !inputs.dry_run }}
@@ -92,7 +110,7 @@ jobs:
           if [[ -n "${{ inputs.collection }}" ]]; then
             args+=(--collection "${{ inputs.collection }}")
           fi
-          PYTHONPATH=.dns-maintenance-engine python -m dns_maintenance "${args[@]}" > "$RUNNER_TEMP/dns-managed-paths.bin"
+          PYTHONPATH="$ENGINE_ROOT" python -P -m dns_maintenance "${args[@]}" > "$RUNNER_TEMP/dns-managed-paths.bin"
 
       - name: Remove engine checkout from caller workspace
         if: ${{ !inputs.dry_run }}
