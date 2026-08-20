@@ -2,7 +2,14 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from dns_maintenance.config import DNSSettings
-from dns_maintenance.dns_engine import DNSResult, aggregate_resolver_results, apply_dns_result, new_host_state, normalize_dns_entry
+from dns_maintenance.dns_engine import (
+    DNSResult,
+    aggregate_resolver_results,
+    apply_dns_result,
+    new_host_state,
+    normalize_dns_entry,
+    partition_public_unicast_ipv4,
+)
 
 UTC = timezone.utc
 BASE = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
@@ -18,9 +25,68 @@ TRANSIENT = DNSResult("TRANSIENT", tuple(), None, {"1.1.1.1": {"status": "TIMEOU
 
 
 class DNSTests(unittest.TestCase):
-    def test_aggregate_any_ipv4_wins(self):
+    def test_public_unicast_filter_rejects_non_routable_ranges(self):
+        public, rejected = partition_public_unicast_ipv4([
+            "8.8.8.8",
+            "10.104.0.5",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "192.0.2.1",
+            "224.0.0.1",
+            "242.243.0.66",
+            "0.0.0.0",
+        ])
+        self.assertEqual(public, ["8.8.8.8"])
+        self.assertEqual(
+            set(rejected),
+            {
+                "10.104.0.5",
+                "100.64.0.1",
+                "127.0.0.1",
+                "169.254.1.1",
+                "192.0.2.1",
+                "224.0.0.1",
+                "242.243.0.66",
+                "0.0.0.0",
+            },
+        )
+
+    def test_aggregate_any_public_ipv4_wins(self):
         r = aggregate_resolver_results({"a": {"status": "NXDOMAIN"}, "b": {"status": "OK", "ipv4": ["2.2.2.2"]}}, 2)
         self.assertEqual(r.aggregate, "OK")
+
+    def test_aggregate_mixed_public_private_keeps_only_public(self):
+        r = aggregate_resolver_results({
+            "a": {"status": "OK", "ipv4": ["8.8.8.8", "10.104.0.5"], "canonical_name": "example.com"},
+            "b": {"status": "NXDOMAIN"},
+        }, 2)
+        self.assertEqual(r.aggregate, "OK")
+        self.assertEqual(r.ipv4, ("8.8.8.8",))
+        self.assertEqual(r.resolver_results["a"]["ipv4"], ["8.8.8.8"])
+        self.assertEqual(r.resolver_results["a"]["non_global_ipv4"], ["10.104.0.5"])
+        self.assertFalse(r.unroutable)
+
+    def test_aggregate_private_only_is_negative_and_unroutable(self):
+        r = aggregate_resolver_results({
+            "a": {"status": "OK", "ipv4": ["10.104.0.5"]},
+            "b": {"status": "OK", "ipv4": ["10.104.0.6"]},
+            "c": {"status": "TIMEOUT"},
+        }, 2)
+        self.assertEqual(r.aggregate, "NEGATIVE")
+        self.assertEqual(r.ipv4, tuple())
+        self.assertTrue(r.unroutable)
+        self.assertEqual(r.resolver_results["a"]["status"], "NON_GLOBAL_A")
+        self.assertEqual(r.resolver_results["b"]["status"], "NON_GLOBAL_A")
+
+    def test_one_private_vote_without_consensus_is_transient(self):
+        r = aggregate_resolver_results({
+            "a": {"status": "OK", "ipv4": ["10.104.0.5"]},
+            "b": {"status": "TIMEOUT"},
+            "c": {"status": "TIMEOUT"},
+        }, 2)
+        self.assertEqual(r.aggregate, "TRANSIENT")
+        self.assertFalse(r.unroutable)
 
     def test_aggregate_two_negative_votes(self):
         r = aggregate_resolver_results({"a": {"status": "NXDOMAIN"}, "b": {"status": "NO_A"}, "c": {"status": "TIMEOUT"}}, 2)
@@ -35,6 +101,41 @@ class DNSTests(unittest.TestCase):
         _, new = apply_dns_result(s, NEG, BASE, SETTINGS)
         self.assertEqual(new, "active")
         self.assertEqual(s["negative_observations"], 1)
+
+    def test_unroutable_immediately_quarantines_published_host(self):
+        s = new_host_state("example.com", BASE, "legacy_active", True)
+        unroutable = DNSResult(
+            "NEGATIVE",
+            tuple(),
+            None,
+            {
+                "1.1.1.1": {"status": "NON_GLOBAL_A", "non_global_ipv4": ["10.104.0.5"]},
+                "8.8.8.8": {"status": "NON_GLOBAL_A", "non_global_ipv4": ["10.104.0.6"]},
+            },
+            True,
+        )
+        _, new = apply_dns_result(s, unroutable, BASE, SETTINGS)
+        self.assertEqual(new, "quarantine")
+        self.assertEqual(s["status"], "quarantine")
+        self.assertEqual(s["safety_reason"], "NON_GLOBAL_A")
+        self.assertEqual(s["quarantined_at"], "2026-08-20T00:00:00Z")
+
+    def test_unroutable_new_candidate_is_not_published(self):
+        s = new_host_state("example.com", BASE, "certspotter:test", False)
+        unroutable = DNSResult(
+            "NEGATIVE",
+            tuple(),
+            None,
+            {
+                "1.1.1.1": {"status": "NON_GLOBAL_A", "non_global_ipv4": ["10.104.0.5"]},
+                "8.8.8.8": {"status": "NON_GLOBAL_A", "non_global_ipv4": ["10.104.0.6"]},
+            },
+            True,
+        )
+        _, new = apply_dns_result(s, unroutable, BASE, SETTINGS)
+        self.assertEqual(new, "pending")
+        self.assertFalse(s["ever_validated"])
+        self.assertEqual(s["safety_reason"], "NON_GLOBAL_A")
 
     def test_suspect_requires_time_and_observations(self):
         s = new_host_state("example.com", BASE, "legacy_active", True)
@@ -70,11 +171,18 @@ class DNSTests(unittest.TestCase):
 
     def test_ok_resets_and_revives(self):
         s = new_host_state("example.com", BASE, "legacy_active", True)
-        s.update({"status": "quarantine", "negative_since": "2026-08-10T00:00:00Z", "negative_observations": 10, "quarantined_at": "2026-08-15T00:00:00Z"})
+        s.update({
+            "status": "quarantine",
+            "negative_since": "2026-08-10T00:00:00Z",
+            "negative_observations": 10,
+            "quarantined_at": "2026-08-15T00:00:00Z",
+            "safety_reason": "NON_GLOBAL_A",
+        })
         _, new = apply_dns_result(s, OK, BASE, SETTINGS)
         self.assertEqual(new, "active")
         self.assertIsNone(s["negative_since"])
         self.assertEqual(s["ipv4"], ["1.2.3.4"])
+        self.assertIsNone(s["safety_reason"])
 
     def test_quarantine_expires_by_elapsed_time(self):
         s = new_host_state("example.com", BASE, "legacy_active", True)
@@ -87,3 +195,4 @@ class DNSTests(unittest.TestCase):
         normalize_dns_entry(s)
         self.assertIsNone(s["negative_since"])
         self.assertEqual(s["last_negative"], "2026-08-19T00:00:00Z")
+        self.assertIsNone(s["safety_reason"])
