@@ -2,15 +2,11 @@ name: DNS maintenance v1 pilot
 
 on:
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Dry run only; do not modify or commit files"
-        required: false
-        default: true
-        type: boolean
 
+# Read-only by design. The reusable workflow inherits these permissions and
+# cannot elevate them.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   maintain:
@@ -18,7 +14,7 @@ jobs:
     with:
       config_path: dns-maintenance.json
       collection: telegram
-      dry_run: ${{ inputs.dry_run }}
+      dry_run: true
       engine_ref: main
     secrets:
       certspotter_api_key: ${{ secrets.CERTSPOTTER_API_KEY }}
