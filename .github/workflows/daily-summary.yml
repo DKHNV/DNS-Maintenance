@@ -1,0 +1,57 @@
+name: Daily DNS summary
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build summary only; do not create a GitHub issue/comment"
+        required: false
+        default: true
+        type: boolean
+
+  schedule:
+    - cron: "17 0 * * *"
+      timezone: "Europe/Helsinki"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dns-maintenance-daily-summary
+  cancel-in-progress: false
+
+jobs:
+  daily-summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout DNS-Maintenance
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build and publish daily summary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          args=(
+            --owner "${{ github.repository_owner }}"
+            --repository "${{ github.repository }}"
+            --timezone "Europe/Helsinki"
+            --stale-after-hours 12
+            --mention "${{ github.repository_owner }}"
+          )
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+
+          python -m dns_maintenance.daily_summary "${args[@]}"
