@@ -16,17 +16,38 @@ def render_report(name: str, active_file: str, dns_state: dict[str, Any], servic
     dns_hosts = dns_state.get("hosts", {}) if isinstance(dns_state.get("hosts"), dict) else {}
     service_hosts = service_state.get("hosts", {}) if isinstance(service_state.get("hosts"), dict) else {}
     dns_counts = Counter(str(e.get("status", "unknown")) for e in dns_hosts.values() if isinstance(e, dict))
-    service_counts = Counter(str(e.get("status", "unknown")) for e in service_hosts.values() if isinstance(e, dict))
+
+    # Service state keeps historical entries. Report only hosts that are still
+    # publicly eligible in DNS so semantic exclusions do not remain in current
+    # HTTPS/TLS totals.
+    active_dns_hosts = {
+        host
+        for host, entry in dns_hosts.items()
+        if isinstance(entry, dict)
+        and entry.get("status") in {"active", "suspect"}
+        and entry.get("ever_validated")
+    }
+    current_service_hosts = {
+        host: entry
+        for host, entry in service_hosts.items()
+        if host in active_dns_hosts and isinstance(entry, dict)
+    }
+    service_counts = Counter(str(e.get("status", "unknown")) for e in current_service_hosts.values())
+
     current_failures = Counter()
     rows = []
-    for host, entry in service_hosts.items():
-        if not isinstance(entry, dict) or entry.get("last_result") != "FAILURE":
+    for host, entry in current_service_hosts.items():
+        if entry.get("last_result") != "FAILURE":
             continue
         last_failure = entry.get("last_failure") if isinstance(entry.get("last_failure"), dict) else {}
         ftype = str(last_failure.get("type", "UNKNOWN"))
         current_failures[ftype] += 1
         rows.append((host, entry, ftype))
-    scores = [float(e["stability_score"]) for e in service_hosts.values() if isinstance(e, dict) and e.get("stability_score") is not None]
+    scores = [
+        float(e["stability_score"])
+        for e in current_service_hosts.values()
+        if e.get("stability_score") is not None
+    ]
     lines = [
         f"# {name.title()} DNS Maintenance Report",
         "",
@@ -40,6 +61,7 @@ def render_report(name: str, active_file: str, dns_state: dict[str, Any], servic
         f"| Pending | {dns_counts.get('pending', 0)} |",
         f"| Suspect | {dns_counts.get('suspect', 0)} |",
         f"| Quarantine | {dns_counts.get('quarantine', 0)} |",
+        f"| Excluded | {dns_counts.get('excluded', 0)} |",
         f"| Expired | {dns_counts.get('expired', 0)} |",
         "",
         "## HTTPS/TLS observation",
@@ -89,6 +111,7 @@ def render_report(name: str, active_file: str, dns_state: dict[str, Any], servic
         "## Notes", "",
         f"- Public active DNS file: `{_esc(active_file)}`.",
         "- DNS lifecycle is time-based and does not depend on how many times per day the workflow runs.",
+        "- Hostname policy exclusions are semantic decisions and are tracked separately from DNS quarantine.",
         "- HTTPS/TLS health is observational and never removes a hostname from the public DNS file.",
         "",
     ]

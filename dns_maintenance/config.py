@@ -33,6 +33,7 @@ class CollectionPaths:
     suspect: Path
     quarantine: Path
     expired: Path
+    excluded: Path
     state: Path
     discovery_state: Path
     service_state: Path
@@ -69,6 +70,7 @@ def load_config(path: Path) -> dict[str, Any]:
         names.add(name)
         if not item.get("active_file") or not item.get("data_dir"):
             raise ValueError(f"Collection {name} requires active_file and data_dir")
+        hostname_policy_settings(item)
     return cfg
 
 
@@ -171,11 +173,55 @@ def discovery_settings(collection: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def hostname_policy_settings(collection: dict[str, Any]) -> dict[str, Any]:
+    raw = collection.get("hostname_policy", {}) if isinstance(collection.get("hostname_policy"), dict) else {}
+    result = dict(raw)
+    result.setdefault("enabled", False)
+    result.setdefault("allow", [])
+    result.setdefault("exclude", [])
+
+    if not isinstance(result["enabled"], bool):
+        raise ValueError("hostname_policy.enabled must be boolean")
+
+    seen_ids: set[str] = set()
+    for group in ("allow", "exclude"):
+        rules = result[group]
+        if not isinstance(rules, list):
+            raise ValueError(f"hostname_policy.{group} must be an array")
+        normalized_rules: list[dict[str, Any]] = []
+        for index, raw_rule in enumerate(rules):
+            if not isinstance(raw_rule, dict):
+                raise ValueError(f"hostname_policy.{group}[{index}] must be an object")
+            match = str(raw_rule.get("match", "")).strip().lower()
+            if match not in {"exact", "suffix"}:
+                raise ValueError(f"hostname_policy.{group}[{index}].match must be 'exact' or 'suffix'")
+            value = normalize_hostname(str(raw_rule.get("value", "")))
+            if not value:
+                raise ValueError(f"hostname_policy.{group}[{index}] has invalid hostname value")
+            rule_id = str(raw_rule.get("id") or f"{group}:{match}:{value}").strip()
+            if not rule_id or rule_id in seen_ids:
+                raise ValueError(f"Duplicate or empty hostname policy rule id: {rule_id!r}")
+            seen_ids.add(rule_id)
+            reason = str(raw_rule.get("reason") or "").strip()
+            if group == "exclude" and not reason:
+                raise ValueError(f"hostname_policy.exclude[{index}] requires a reason")
+            normalized_rules.append({
+                "id": rule_id,
+                "match": match,
+                "value": value,
+                "reason": reason,
+            })
+        result[group] = normalized_rules
+    return result
+
+
 def collection_paths(repo_root: Path, collection: dict[str, Any]) -> CollectionPaths:
     data_rel = str(collection["data_dir"]).rstrip("/")
     data_dir = safe_path(repo_root, data_rel)
+
     def p(name: str) -> Path:
         return safe_path(repo_root, f"{data_rel}/{name}")
+
     return CollectionPaths(
         active=safe_path(repo_root, str(collection["active_file"])),
         data_dir=data_dir,
@@ -185,6 +231,7 @@ def collection_paths(repo_root: Path, collection: dict[str, Any]) -> CollectionP
         suspect=p("suspect.txt"),
         quarantine=p("quarantine.txt"),
         expired=p("expired.txt"),
+        excluded=p("excluded.txt"),
         state=p("state.json"),
         discovery_state=p("discovery_state.json"),
         service_state=p("service_state.json"),
