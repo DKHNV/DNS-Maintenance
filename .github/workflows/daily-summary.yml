@@ -62,4 +62,4 @@ jobs:
             args+=(--skip-if-published-today)
           fi
 
-          python -m dns_maintenance.daily_summary_schedule "${args[@]}"
+          python -m dns_maintenance.daily_summary_semantic_schedule "${args[@]}"
