@@ -4,7 +4,13 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dns_maintenance.config import collection_paths, dns_settings, load_config, service_settings
+from dns_maintenance.config import (
+    collection_paths,
+    dns_settings,
+    load_config,
+    runtime_candidate_settings,
+    service_settings,
+)
 from dns_maintenance.report import render_report
 
 
@@ -20,6 +26,30 @@ class ConfigReportTests(unittest.TestCase):
             p = Path(td) / "config.json"
             p.write_text(json.dumps(self.sample()))
             self.assertEqual(load_config(p)["version"], 1)
+
+    def test_runtime_candidate_is_disabled_by_default(self):
+        cfg = self.sample()
+        collection = cfg["collections"][0]
+        settings = runtime_candidate_settings(collection)
+        self.assertEqual(settings, {"enabled": False})
+
+    def test_runtime_candidate_can_be_enabled(self):
+        cfg = self.sample()
+        collection = cfg["collections"][0]
+        collection["runtime_candidate"] = {"enabled": True}
+        settings = runtime_candidate_settings(collection)
+        self.assertEqual(settings, {"enabled": True})
+
+    def test_runtime_candidate_enabled_must_be_boolean(self):
+        cfg = self.sample()
+        collection = cfg["collections"][0]
+        collection["runtime_candidate"] = {"enabled": "true"}
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "runtime_candidate.enabled must be boolean",
+        ):
+            runtime_candidate_settings(collection)
 
     def test_default_dns_thresholds_are_time_based(self):
         cfg = self.sample()
@@ -37,6 +67,11 @@ class ConfigReportTests(unittest.TestCase):
             c = self.sample()["collections"][0]
             paths = collection_paths(Path(td), c)
             self.assertTrue(str(paths.report).endswith("dns/telegram/report.md"))
+            self.assertTrue(
+                str(paths.runtime_candidate_state).endswith(
+                    "dns/telegram/runtime_candidate_state.json"
+                )
+            )
 
     def test_report_has_no_trailing_whitespace(self):
         report = render_report("telegram", "Telegram_DNS", {"hosts": {}}, {"hosts": {}}, {"updated_at": "2026-08-20T00:00:00Z"}, datetime(2026, 8, 20, tzinfo=timezone.utc))
