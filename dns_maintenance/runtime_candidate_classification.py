@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .policy import evaluate_hostname
-from .utils import iso, normalize_hostname
+from .utils import iso, normalize_hostname, save_json
 
 
 CLASSIFICATION_VERSION = 1
@@ -104,10 +105,8 @@ def classify_runtime_candidate(
     """
     Classify one Runtime Candidate in shadow mode.
 
-    This function is intentionally non-promoting.
-
-    Runtime observation metrics are recorded as evidence only.
-    They cannot produce candidate/promoted_exact or modify Exact DNS.
+    Runtime evidence is informational only. This function cannot promote a
+    Runtime Candidate into Exact DNS and does not mutate either input state.
     """
 
     if not isinstance(candidate, dict):
@@ -201,9 +200,7 @@ def classify_runtime_candidate_state(
     now: datetime,
 ) -> dict[str, Any]:
     """
-    Produce a read-only classification snapshot for a Runtime Candidate state.
-
-    The supplied Runtime Candidate state and DNS state are never mutated.
+    Produce a read-only shadow-classification snapshot.
     """
 
     if not isinstance(runtime_state, dict):
@@ -219,6 +216,11 @@ def classify_runtime_candidate_state(
         )
 
     classified: dict[str, dict[str, Any]] = {}
+    counts = {
+        "observed": 0,
+        "observe_only": 0,
+        "rejected": 0,
+    }
 
     for candidate_id, candidate in sorted(candidates.items()):
         if not isinstance(candidate_id, str) or not candidate_id:
@@ -238,17 +240,91 @@ def classify_runtime_candidate_state(
                 "Runtime Candidate state candidate_id mismatch"
             )
 
-        classified[candidate_id] = classify_runtime_candidate(
+        result = classify_runtime_candidate(
             candidate,
             dns_state,
             hostname_policy_cfg,
             now,
         )
 
+        decision = result["decision"]
+
+        if decision not in counts:
+            raise RuntimeError(
+                f"Unsupported shadow classification decision: {decision}"
+            )
+
+        counts[decision] += 1
+        classified[candidate_id] = result
+
     return {
         "version": CLASSIFICATION_VERSION,
         "mode": CLASSIFICATION_MODE,
         "service": runtime_state.get("service"),
         "classified_at": iso(now),
+        "source_content_hash": runtime_state.get(
+            "source_content_hash"
+        ),
+        "source_generated_at": runtime_state.get(
+            "source_generated_at"
+        ),
+        "source_last_intake_at": runtime_state.get(
+            "last_intake_at"
+        ),
+        "counts": counts,
         "candidates": classified,
+    }
+
+
+def write_runtime_candidate_classification_snapshot(
+    runtime_state: dict[str, Any],
+    dns_state: dict[str, Any],
+    hostname_policy_cfg: dict[str, Any],
+    state_path: Path,
+    dry_run: bool,
+    now: datetime,
+) -> dict[str, Any]:
+    """
+    Compute and optionally persist a shadow-classification snapshot.
+
+    Classification never writes to Runtime Candidate state or Exact DNS state.
+    """
+
+    snapshot = classify_runtime_candidate_state(
+        runtime_state,
+        dns_state,
+        hostname_policy_cfg,
+        now,
+    )
+
+    if dry_run:
+        return {
+            "status": "ok",
+            "written": False,
+            "dry_run": True,
+            "state_path": str(state_path),
+            "state": snapshot,
+        }
+
+    try:
+        save_json(
+            state_path,
+            snapshot,
+        )
+    except OSError as exc:
+        return {
+            "status": "write_error",
+            "written": False,
+            "dry_run": False,
+            "state_path": str(state_path),
+            "state": snapshot,
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "written": True,
+        "dry_run": False,
+        "state_path": str(state_path),
+        "state": snapshot,
     }

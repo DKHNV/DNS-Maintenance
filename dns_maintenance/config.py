@@ -36,6 +36,7 @@ class CollectionPaths:
     excluded: Path
     state: Path
     runtime_candidate_state: Path
+    runtime_candidate_classification: Path
     discovery_state: Path
     service_state: Path
     service_alive: Path
@@ -72,6 +73,7 @@ def load_config(path: Path) -> dict[str, Any]:
         if not item.get("active_file") or not item.get("data_dir"):
             raise ValueError(f"Collection {name} requires active_file and data_dir")
         runtime_candidate_settings(item)
+        runtime_candidate_classification_settings(item)
         hostname_policy_settings(item)
     return cfg
 
@@ -85,6 +87,48 @@ def collections_for(cfg: dict[str, Any], selected: set[str] | None = None) -> li
     if unknown:
         raise ValueError(f"Unknown collection(s): {', '.join(sorted(unknown))}")
     return [x for x in items if str(x["name"]) in selected]
+
+
+def runtime_candidate_classification_settings(
+    collection: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_cfg = collection.get("runtime_candidate")
+
+    if runtime_cfg is None:
+        return {"enabled": False}
+
+    if not isinstance(runtime_cfg, dict):
+        raise ValueError("runtime_candidate must be an object")
+
+    raw = runtime_cfg.get("classification")
+
+    if raw is None:
+        return {"enabled": False}
+
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "runtime_candidate.classification must be an object"
+        )
+
+    result = dict(raw)
+    result.setdefault("enabled", False)
+
+    if not isinstance(result["enabled"], bool):
+        raise ValueError(
+            "runtime_candidate.classification.enabled must be boolean"
+        )
+
+    runtime_enabled = runtime_candidate_settings(
+        collection
+    )["enabled"]
+
+    if result["enabled"] and not runtime_enabled:
+        raise ValueError(
+            "runtime_candidate.classification.enabled "
+            "requires runtime_candidate.enabled"
+        )
+
+    return result
 
 
 def dns_settings(cfg: dict[str, Any], collection: dict[str, Any]) -> DNSSettings:
@@ -252,6 +296,9 @@ def collection_paths(repo_root: Path, collection: dict[str, Any]) -> CollectionP
         excluded=p("excluded.txt"),
         state=p("state.json"),
         runtime_candidate_state=p("runtime_candidate_state.json"),
+        runtime_candidate_classification=p(
+            "runtime_candidate_classification.json"
+        ),
         discovery_state=p("discovery_state.json"),
         service_state=p("service_state.json"),
         service_alive=p("service_alive.txt"),
