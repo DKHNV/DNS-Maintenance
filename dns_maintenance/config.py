@@ -8,6 +8,9 @@ from typing import Any
 from .runtime_candidate_eligibility import (
     candidate_eligibility_settings as normalize_candidate_eligibility_settings,
 )
+from .runtime_candidate_maturity import (
+    candidate_maturity_settings as normalize_candidate_maturity_settings,
+)
 from .utils import load_json, normalize_hostname, safe_path
 
 
@@ -97,6 +100,7 @@ def load_config(path: Path) -> dict[str, Any]:
         runtime_candidate_settings(item)
         runtime_candidate_classification_settings(item)
         runtime_candidate_eligibility_settings(item)
+        runtime_candidate_maturity_settings(item)
         hostname_policy_settings(item)
 
     return cfg
@@ -249,6 +253,84 @@ def runtime_candidate_eligibility_settings(
             "runtime_candidate.classification."
             "candidate_eligibility.enabled requires "
             "runtime_candidate.classification.enabled"
+        )
+
+    return result
+
+
+def runtime_candidate_maturity_settings(
+    collection: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_cfg = collection.get(
+        "runtime_candidate"
+    )
+
+    if runtime_cfg is None:
+        return normalize_candidate_maturity_settings(
+            None
+        )
+
+    if not isinstance(runtime_cfg, dict):
+        raise ValueError(
+            "runtime_candidate must be an object"
+        )
+
+    classification_cfg = runtime_cfg.get(
+        "classification"
+    )
+
+    if classification_cfg is None:
+        raw = None
+
+    else:
+        if not isinstance(
+            classification_cfg,
+            dict,
+        ):
+            raise ValueError(
+                "runtime_candidate.classification "
+                "must be an object"
+            )
+
+        raw = classification_cfg.get(
+            "candidate_maturity"
+        )
+
+    result = normalize_candidate_maturity_settings(
+        raw
+    )
+
+    classification_enabled = (
+        runtime_candidate_classification_settings(
+            collection
+        )["enabled"]
+    )
+
+    if (
+        result["enabled"]
+        and not classification_enabled
+    ):
+        raise ValueError(
+            "runtime_candidate.classification."
+            "candidate_maturity.enabled requires "
+            "runtime_candidate.classification.enabled"
+        )
+
+    eligibility_enabled = (
+        runtime_candidate_eligibility_settings(
+            collection
+        )["enabled"]
+    )
+
+    if (
+        result["enabled"]
+        and not eligibility_enabled
+    ):
+        raise ValueError(
+            "runtime_candidate.classification."
+            "candidate_maturity.enabled requires "
+            "runtime_candidate.classification."
+            "candidate_eligibility.enabled"
         )
 
     return result

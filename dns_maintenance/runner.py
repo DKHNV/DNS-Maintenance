@@ -11,6 +11,7 @@ from .config import (
     hostname_policy_settings,
     runtime_candidate_classification_settings,
     runtime_candidate_eligibility_settings,
+    runtime_candidate_maturity_settings,
     runtime_candidate_settings,
     service_settings,
 )
@@ -50,6 +51,12 @@ def run(
 
         runtime_eligibility_cfg = (
             runtime_candidate_eligibility_settings(
+                collection
+            )
+        )
+
+        runtime_maturity_cfg = (
+            runtime_candidate_maturity_settings(
                 collection
             )
         )
@@ -207,7 +214,27 @@ def run(
 
             else:
                 try:
-                    if runtime_eligibility_cfg[
+                    if runtime_maturity_cfg[
+                        "enabled"
+                    ]:
+                        classification_result = (
+                            write_runtime_candidate_classification_snapshot(
+                                runtime_candidate_state,
+                                dns_state,
+                                policy_cfg,
+                                paths.runtime_candidate_classification,
+                                dry_run,
+                                now,
+                                candidate_eligibility_cfg=(
+                                    runtime_eligibility_cfg
+                                ),
+                                candidate_maturity_cfg=(
+                                    runtime_maturity_cfg
+                                ),
+                            )
+                        )
+
+                    elif runtime_eligibility_cfg[
                         "enabled"
                     ]:
                         classification_result = (
@@ -254,6 +281,13 @@ def run(
                             "observe_only": 0,
                             "rejected": 0,
                         }
+
+                        maturity_counts = {
+                            "tracking": 0,
+                            "ready": 0,
+                        }
+
+                        maturity_active = False
 
                         if isinstance(
                             classification_state,
@@ -312,12 +346,67 @@ def run(
                                             candidate_value
                                         )
 
+                            classified_candidates = (
+                                classification_state.get(
+                                    "candidates",
+                                    {},
+                                )
+                            )
+
+                            if isinstance(
+                                classified_candidates,
+                                dict,
+                            ):
+                                for result in (
+                                    classified_candidates.values()
+                                ):
+                                    if not isinstance(
+                                        result,
+                                        dict,
+                                    ):
+                                        continue
+
+                                    maturity = result.get(
+                                        "maturity"
+                                    )
+
+                                    if not isinstance(
+                                        maturity,
+                                        dict,
+                                    ):
+                                        continue
+
+                                    maturity_state = (
+                                        maturity.get(
+                                            "state"
+                                        )
+                                    )
+
+                                    if (
+                                        maturity_state
+                                        in maturity_counts
+                                    ):
+                                        maturity_active = True
+                                        maturity_counts[
+                                            maturity_state
+                                        ] += 1
+
                         candidate_message = ""
 
                         if "candidate" in counts:
                             candidate_message = (
                                 f"candidate="
                                 f"{counts['candidate']} "
+                            )
+
+                        maturity_message = ""
+
+                        if maturity_active:
+                            maturity_message = (
+                                f"maturity_tracking="
+                                f"{maturity_counts['tracking']} "
+                                f"maturity_ready="
+                                f"{maturity_counts['ready']} "
                             )
 
                         print(
@@ -331,6 +420,7 @@ def run(
                             f"{counts['observe_only']} "
                             f"rejected="
                             f"{counts['rejected']} "
+                            f"{maturity_message}"
                             f"written="
                             f"{classification_result['written']} "
                             f"dry_run={dry_run}"
