@@ -6,9 +6,10 @@ import json
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from .utils import iso, normalize_hostname
+from .utils import iso, normalize_hostname, save_json
 
 
 FEED_SCHEMA_VERSION = 1
@@ -72,7 +73,7 @@ RUNTIME_METRIC_FIELDS = (
 )
 
 RUNTIME_CANDIDATE_STATE_VERSION = 1
-
+RUNTIME_CANDIDATE_FEED_FILENAME = "Runtime_Candidate_Feed.json"
 
 def runtime_candidate_id(
     service: str,
@@ -350,3 +351,124 @@ def merge_runtime_candidate_state(
             existing[field] = copy.deepcopy(source[field])
 
     return state
+
+
+def intake_runtime_candidate_feed(
+    repo_root: Path,
+    service: str,
+    state_path: Path,
+    dry_run: bool,
+    now: datetime,
+) -> dict[str, Any]:
+    feed_path = repo_root / RUNTIME_CANDIDATE_FEED_FILENAME
+
+    if not feed_path.exists():
+        return {
+            "status": "absent",
+            "written": False,
+            "dry_run": dry_run,
+            "feed_path": str(feed_path),
+            "state_path": str(state_path),
+            "state": None,
+        }
+
+    try:
+        feed = json.loads(
+            feed_path.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {
+            "status": "invalid_feed",
+            "written": False,
+            "dry_run": dry_run,
+            "feed_path": str(feed_path),
+            "state_path": str(state_path),
+            "state": None,
+            "error": str(exc),
+        }
+
+    try:
+        validate_runtime_candidate_feed(
+            feed,
+            service,
+        )
+    except ValueError as exc:
+        return {
+            "status": "invalid_feed",
+            "written": False,
+            "dry_run": dry_run,
+            "feed_path": str(feed_path),
+            "state_path": str(state_path),
+            "state": None,
+            "error": str(exc),
+        }
+
+    previous: Any = {}
+
+    if state_path.exists():
+        try:
+            previous = json.loads(
+                state_path.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            return {
+                "status": "invalid_state",
+                "written": False,
+                "dry_run": dry_run,
+                "feed_path": str(feed_path),
+                "state_path": str(state_path),
+                "state": None,
+                "error": str(exc),
+            }
+
+    try:
+        prospective = merge_runtime_candidate_state(
+            previous,
+            feed,
+            now,
+        )
+    except ValueError as exc:
+        return {
+            "status": "invalid_state",
+            "written": False,
+            "dry_run": dry_run,
+            "feed_path": str(feed_path),
+            "state_path": str(state_path),
+            "state": None,
+            "error": str(exc),
+        }
+
+    if dry_run:
+        return {
+            "status": "ok",
+            "written": False,
+            "dry_run": True,
+            "feed_path": str(feed_path),
+            "state_path": str(state_path),
+            "state": prospective,
+        }
+
+    try:
+        save_json(
+            state_path,
+            prospective,
+        )
+    except OSError as exc:
+        return {
+            "status": "write_error",
+            "written": False,
+            "dry_run": False,
+            "feed_path": str(feed_path),
+            "state_path": str(state_path),
+            "state": prospective,
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "written": True,
+        "dry_run": False,
+        "feed_path": str(feed_path),
+        "state_path": str(state_path),
+        "state": prospective,
+    }
