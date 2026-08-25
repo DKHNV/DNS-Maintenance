@@ -12,7 +12,7 @@ jobs:
   maintain:
     uses: DKHNV/DNS-Maintenance/.github/workflows/reusable-maintenance.yml@main
     with:
-      config_path: dns-maintenance.json
+      config_path: dns-maintenance-v1.json
       collection: telegram
       dry_run: true
       engine_ref: main
