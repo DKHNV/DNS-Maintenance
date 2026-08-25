@@ -2,8 +2,10 @@ import hashlib
 import json
 import unittest
 import uuid
+from datetime import datetime, timezone
 
 from dns_maintenance.runtime_candidate import (
+    merge_runtime_candidate_state,
     runtime_candidate_id,
     validate_runtime_candidate_feed,
 )
@@ -35,6 +37,216 @@ class RuntimeCandidateTests(unittest.TestCase):
             "last_external_at": "2026-08-24T19:12:05Z",
         }
 
+    def now(self):
+        return datetime(2026, 8, 25, 10, 30, tzinfo=timezone.utc)
+
+    def test_state_adds_new_candidate(self):
+        feed = self.feed()
+        validate_runtime_candidate_feed(feed, "netflix")
+
+        state = merge_runtime_candidate_state(
+            {},
+            feed,
+            self.now(),
+        )
+
+        candidate = feed["candidates"][0]
+        stored = state["candidates"][candidate["candidate_id"]]
+
+        self.assertEqual(state["schema_version"], 1)
+        self.assertEqual(state["service"], "netflix")
+        self.assertEqual(state["observer_id"], feed["observer_id"])
+        self.assertEqual(
+            state["source_content_hash"],
+            feed["content_hash"],
+        )
+        self.assertEqual(state["last_intake_status"], "ok")
+
+        self.assertEqual(stored["state"], "observed")
+        self.assertTrue(stored["feed_present"])
+        self.assertEqual(
+            stored["first_intake_at"],
+            "2026-08-25T10:30:00Z",
+        )
+        self.assertEqual(
+            stored["last_intake_at"],
+            "2026-08-25T10:30:00Z",
+        )
+
+    def test_existing_candidate_updates_runtime_metrics(self):
+        feed = self.feed()
+        state = merge_runtime_candidate_state(
+            {},
+            feed,
+            self.now(),
+        )
+
+        candidate = feed["candidates"][0]
+        candidate_id = candidate["candidate_id"]
+
+        feed["candidates"][0]["observation_count"] = 9
+        feed["candidates"][0]["presence_cycles"] = 20
+        self.rehash(feed)
+
+        later = datetime(
+            2026,
+            8,
+            25,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        updated = merge_runtime_candidate_state(
+            state,
+            feed,
+            later,
+        )
+
+        stored = updated["candidates"][candidate_id]
+
+        self.assertEqual(stored["observation_count"], 9)
+        self.assertEqual(stored["presence_cycles"], 20)
+        self.assertEqual(
+            stored["first_intake_at"],
+            "2026-08-25T10:30:00Z",
+        )
+        self.assertEqual(
+            stored["last_intake_at"],
+            "2026-08-25T11:00:00Z",
+        )
+        self.assertTrue(stored["feed_present"])
+
+    def test_missing_candidate_is_retained_and_marked_absent(self):
+        feed = self.feed()
+        state = merge_runtime_candidate_state(
+            {},
+            feed,
+            self.now(),
+        )
+
+        candidate_id = feed["candidates"][0]["candidate_id"]
+        original_last_intake = (
+            state["candidates"][candidate_id]["last_intake_at"]
+        )
+
+        feed["candidates"] = []
+        self.rehash(feed)
+
+        later = datetime(
+            2026,
+            8,
+            25,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        updated = merge_runtime_candidate_state(
+            state,
+            feed,
+            later,
+        )
+
+        self.assertIn(candidate_id, updated["candidates"])
+        stored = updated["candidates"][candidate_id]
+
+        self.assertFalse(stored["feed_present"])
+        self.assertEqual(
+            stored["last_intake_at"],
+            original_last_intake,
+        )
+
+    def test_feed_does_not_reset_central_candidate_state(self):
+        feed = self.feed()
+        state = merge_runtime_candidate_state(
+            {},
+            feed,
+            self.now(),
+        )
+
+        candidate_id = feed["candidates"][0]["candidate_id"]
+        state["candidates"][candidate_id]["state"] = "candidate"
+
+        later = datetime(
+            2026,
+            8,
+            25,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        updated = merge_runtime_candidate_state(
+            state,
+            feed,
+            later,
+        )
+
+        self.assertEqual(
+            updated["candidates"][candidate_id]["state"],
+            "candidate",
+        )
+
+    def test_observer_change_is_rejected(self):
+        feed = self.feed()
+        state = merge_runtime_candidate_state(
+            {},
+            feed,
+            self.now(),
+        )
+
+        feed["observer_id"] = str(uuid.uuid4())
+        self.rehash(feed)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "observer_id mismatch",
+        ):
+            merge_runtime_candidate_state(
+                state,
+                feed,
+                self.now(),
+            )
+
+    def test_bad_existing_state_schema_is_rejected(self):
+        feed = self.feed()
+
+        previous = {
+            "schema_version": 2,
+            "service": "netflix",
+            "observer_id": feed["observer_id"],
+            "candidates": {},
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "state schema_version",
+        ):
+            merge_runtime_candidate_state(
+                previous,
+                feed,
+                self.now(),
+            )
+
+    def test_merge_does_not_mutate_previous_state(self):
+        feed = self.feed()
+        previous = merge_runtime_candidate_state(
+            {},
+            feed,
+            self.now(),
+        )
+
+        snapshot = json.loads(json.dumps(previous))
+
+        merge_runtime_candidate_state(
+            previous,
+            feed,
+            self.now(),
+        )
+
+        self.assertEqual(previous, snapshot)
+    
     def feed(self, service="netflix"):
         feed = {
             "schema_version": 1,
