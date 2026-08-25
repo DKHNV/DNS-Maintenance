@@ -1,10 +1,13 @@
+import tempfile
 import hashlib
 import json
 import unittest
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from dns_maintenance.runtime_candidate import (
+    intake_runtime_candidate_feed,
     merge_runtime_candidate_state,
     runtime_candidate_id,
     validate_runtime_candidate_feed,
@@ -441,4 +444,250 @@ class RuntimeCandidateTests(unittest.TestCase):
             validate_runtime_candidate_feed(
                 feed,
                 "netflix",
+            )
+    def test_intake_writes_valid_feed_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_path = (
+                root
+                / "dns"
+                / "netflix"
+                / "runtime_candidate_state.json"
+            )
+
+            feed = self.feed()
+            (root / "Runtime_Candidate_Feed.json").write_text(
+                json.dumps(feed),
+                encoding="utf-8",
+            )
+
+            result = intake_runtime_candidate_feed(
+                root,
+                "netflix",
+                state_path,
+                False,
+                self.now(),
+            )
+
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(result["written"])
+            self.assertFalse(result["dry_run"])
+            self.assertTrue(state_path.exists())
+
+            stored = json.loads(
+                state_path.read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(stored["service"], "netflix")
+            self.assertEqual(
+                stored["source_content_hash"],
+                feed["content_hash"],
+            )
+
+    def test_intake_reads_feed_only_from_repo_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            data_dir = root / "dns" / "netflix"
+            data_dir.mkdir(parents=True)
+
+            feed = self.feed()
+            (data_dir / "Runtime_Candidate_Feed.json").write_text(
+                json.dumps(feed),
+                encoding="utf-8",
+            )
+
+            state_path = (
+                data_dir
+                / "runtime_candidate_state.json"
+            )
+
+            result = intake_runtime_candidate_feed(
+                root,
+                "netflix",
+                state_path,
+                False,
+                self.now(),
+            )
+
+            self.assertEqual(result["status"], "absent")
+            self.assertFalse(state_path.exists())
+
+    def test_missing_feed_preserves_existing_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_path = (
+                root
+                / "dns"
+                / "netflix"
+                / "runtime_candidate_state.json"
+            )
+            state_path.parent.mkdir(parents=True)
+
+            original = '{"preserve": true}\n'
+            state_path.write_text(
+                original,
+                encoding="utf-8",
+            )
+
+            result = intake_runtime_candidate_feed(
+                root,
+                "netflix",
+                state_path,
+                False,
+                self.now(),
+            )
+
+            self.assertEqual(result["status"], "absent")
+            self.assertEqual(
+                state_path.read_text(encoding="utf-8"),
+                original,
+            )
+
+    def test_malformed_feed_preserves_existing_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_path = (
+                root
+                / "dns"
+                / "netflix"
+                / "runtime_candidate_state.json"
+            )
+            state_path.parent.mkdir(parents=True)
+
+            original = '{"preserve": true}\n'
+            state_path.write_text(
+                original,
+                encoding="utf-8",
+            )
+
+            (root / "Runtime_Candidate_Feed.json").write_text(
+                "{not-json",
+                encoding="utf-8",
+            )
+
+            result = intake_runtime_candidate_feed(
+                root,
+                "netflix",
+                state_path,
+                False,
+                self.now(),
+            )
+
+            self.assertEqual(
+                result["status"],
+                "invalid_feed",
+            )
+            self.assertEqual(
+                state_path.read_text(encoding="utf-8"),
+                original,
+            )
+
+    def test_invalid_feed_preserves_existing_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_path = (
+                root
+                / "dns"
+                / "netflix"
+                / "runtime_candidate_state.json"
+            )
+            state_path.parent.mkdir(parents=True)
+
+            original = '{"preserve": true}\n'
+            state_path.write_text(
+                original,
+                encoding="utf-8",
+            )
+
+            feed = self.feed("youtube")
+            (root / "Runtime_Candidate_Feed.json").write_text(
+                json.dumps(feed),
+                encoding="utf-8",
+            )
+
+            result = intake_runtime_candidate_feed(
+                root,
+                "netflix",
+                state_path,
+                False,
+                self.now(),
+            )
+
+            self.assertEqual(
+                result["status"],
+                "invalid_feed",
+            )
+            self.assertEqual(
+                state_path.read_text(encoding="utf-8"),
+                original,
+            )
+
+    def test_dry_run_computes_state_without_writing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_path = (
+                root
+                / "dns"
+                / "netflix"
+                / "runtime_candidate_state.json"
+            )
+
+            feed = self.feed()
+            (root / "Runtime_Candidate_Feed.json").write_text(
+                json.dumps(feed),
+                encoding="utf-8",
+            )
+
+            result = intake_runtime_candidate_feed(
+                root,
+                "netflix",
+                state_path,
+                True,
+                self.now(),
+            )
+
+            self.assertEqual(result["status"], "ok")
+            self.assertFalse(result["written"])
+            self.assertTrue(result["dry_run"])
+            self.assertIsNotNone(result["state"])
+            self.assertFalse(state_path.exists())
+
+    def test_invalid_existing_state_is_preserved(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_path = (
+                root
+                / "dns"
+                / "netflix"
+                / "runtime_candidate_state.json"
+            )
+            state_path.parent.mkdir(parents=True)
+
+            original = "{broken-state"
+            state_path.write_text(
+                original,
+                encoding="utf-8",
+            )
+
+            feed = self.feed()
+            (root / "Runtime_Candidate_Feed.json").write_text(
+                json.dumps(feed),
+                encoding="utf-8",
+            )
+
+            result = intake_runtime_candidate_feed(
+                root,
+                "netflix",
+                state_path,
+                False,
+                self.now(),
+            )
+
+            self.assertEqual(
+                result["status"],
+                "invalid_state",
+            )
+            self.assertEqual(
+                state_path.read_text(encoding="utf-8"),
+                original,
             )
