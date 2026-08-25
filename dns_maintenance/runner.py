@@ -10,6 +10,7 @@ from .config import (
     dns_settings,
     hostname_policy_settings,
     runtime_candidate_classification_settings,
+    runtime_candidate_eligibility_settings,
     runtime_candidate_settings,
     service_settings,
 )
@@ -40,13 +41,23 @@ def run(
         runtime_candidate_cfg = runtime_candidate_settings(
             collection
         )
+
         runtime_classification_cfg = (
             runtime_candidate_classification_settings(
                 collection
             )
         )
 
-        runtime_candidate_state: dict[str, Any] | None = None
+        runtime_eligibility_cfg = (
+            runtime_candidate_eligibility_settings(
+                collection
+            )
+        )
+
+        runtime_candidate_state: (
+            dict[str, Any] | None
+        ) = None
+
         runtime_candidate_intake_status = "disabled"
 
         if runtime_candidate_cfg["enabled"]:
@@ -61,41 +72,64 @@ def run(
                     )
                 )
 
-                status = runtime_candidate_result["status"]
-                runtime_candidate_intake_status = status
+                status = runtime_candidate_result[
+                    "status"
+                ]
+
+                runtime_candidate_intake_status = (
+                    status
+                )
 
                 if status == "ok":
-                    runtime_state = runtime_candidate_result.get(
-                        "state"
+                    runtime_state = (
+                        runtime_candidate_result.get(
+                            "state"
+                        )
                     )
 
-                    if isinstance(runtime_state, dict):
-                        runtime_candidate_state = runtime_state
+                    if isinstance(
+                        runtime_state,
+                        dict,
+                    ):
+                        runtime_candidate_state = (
+                            runtime_state
+                        )
 
                     candidate_count = 0
 
-                    if isinstance(runtime_state, dict):
-                        runtime_candidates = runtime_state.get(
-                            "candidates",
-                            {},
+                    if isinstance(
+                        runtime_state,
+                        dict,
+                    ):
+                        runtime_candidates = (
+                            runtime_state.get(
+                                "candidates",
+                                {},
+                            )
                         )
 
-                        if isinstance(runtime_candidates, dict):
+                        if isinstance(
+                            runtime_candidates,
+                            dict,
+                        ):
                             candidate_count = len(
                                 runtime_candidates
                             )
 
                     print(
                         f"[{name}] runtime candidate intake: "
-                        f"status=ok candidates={candidate_count} "
+                        f"status=ok "
+                        f"candidates={candidate_count} "
                         f"written="
                         f"{runtime_candidate_result['written']} "
                         f"dry_run={dry_run}"
                     )
 
                 else:
-                    error = runtime_candidate_result.get(
-                        "error"
+                    error = (
+                        runtime_candidate_result.get(
+                            "error"
+                        )
                     )
 
                     message = (
@@ -104,19 +138,25 @@ def run(
                     )
 
                     if error:
-                        message += f" error={error}"
+                        message += (
+                            f" error={error}"
+                        )
 
                     print(message)
 
             except Exception as exc:
-                runtime_candidate_intake_status = "error"
+                runtime_candidate_intake_status = (
+                    "error"
+                )
 
                 print(
                     f"[{name}] runtime candidate intake: "
                     f"status=error error={exc}"
                 )
 
-        discovery_cfg = discovery_settings(collection)
+        discovery_cfg = discovery_settings(
+            collection
+        )
 
         candidates, discovery_state, _ = discover(
             name,
@@ -129,13 +169,18 @@ def run(
         dns_state, _ = maintain_dns(
             name,
             paths,
-            dns_settings(cfg, collection),
+            dns_settings(
+                cfg,
+                collection,
+            ),
             now,
             candidates,
             dry_run,
         )
 
-        policy_cfg = hostname_policy_settings(collection)
+        policy_cfg = hostname_policy_settings(
+            collection
+        )
 
         dns_state, _ = apply_hostname_policy(
             name,
@@ -148,11 +193,13 @@ def run(
 
         if runtime_classification_cfg["enabled"]:
             if (
-                runtime_candidate_intake_status != "ok"
+                runtime_candidate_intake_status
+                != "ok"
                 or runtime_candidate_state is None
             ):
                 print(
-                    f"[{name}] runtime candidate classification: "
+                    f"[{name}] runtime candidate "
+                    f"classification: "
                     f"status=skipped "
                     f"reason=intake_"
                     f"{runtime_candidate_intake_status}"
@@ -160,24 +207,46 @@ def run(
 
             else:
                 try:
-                    classification_result = (
-                        write_runtime_candidate_classification_snapshot(
-                            runtime_candidate_state,
-                            dns_state,
-                            policy_cfg,
-                            paths.runtime_candidate_classification,
-                            dry_run,
-                            now,
+                    if runtime_eligibility_cfg[
+                        "enabled"
+                    ]:
+                        classification_result = (
+                            write_runtime_candidate_classification_snapshot(
+                                runtime_candidate_state,
+                                dns_state,
+                                policy_cfg,
+                                paths.runtime_candidate_classification,
+                                dry_run,
+                                now,
+                                candidate_eligibility_cfg=(
+                                    runtime_eligibility_cfg
+                                ),
+                            )
                         )
-                    )
+
+                    else:
+                        classification_result = (
+                            write_runtime_candidate_classification_snapshot(
+                                runtime_candidate_state,
+                                dns_state,
+                                policy_cfg,
+                                paths.runtime_candidate_classification,
+                                dry_run,
+                                now,
+                            )
+                        )
 
                     classification_status = (
-                        classification_result["status"]
+                        classification_result[
+                            "status"
+                        ]
                     )
 
                     if classification_status == "ok":
                         classification_state = (
-                            classification_result.get("state")
+                            classification_result.get(
+                                "state"
+                            )
                         )
 
                         counts = {
@@ -197,42 +266,94 @@ def run(
                                 )
                             )
 
-                            if isinstance(state_counts, dict):
-                                for key in counts:
-                                    value = state_counts.get(
-                                        key,
-                                        0,
+                            if isinstance(
+                                state_counts,
+                                dict,
+                            ):
+                                for key in (
+                                    "observed",
+                                    "observe_only",
+                                    "rejected",
+                                ):
+                                    value = (
+                                        state_counts.get(
+                                            key,
+                                            0,
+                                        )
                                     )
 
-                                    if type(value) is int:
-                                        counts[key] = value
+                                    if (
+                                        type(value)
+                                        is int
+                                    ):
+                                        counts[
+                                            key
+                                        ] = value
+
+                                if (
+                                    "candidate"
+                                    in state_counts
+                                ):
+                                    candidate_value = (
+                                        state_counts[
+                                            "candidate"
+                                        ]
+                                    )
+
+                                    if (
+                                        type(
+                                            candidate_value
+                                        )
+                                        is int
+                                    ):
+                                        counts[
+                                            "candidate"
+                                        ] = (
+                                            candidate_value
+                                        )
+
+                        candidate_message = ""
+
+                        if "candidate" in counts:
+                            candidate_message = (
+                                f"candidate="
+                                f"{counts['candidate']} "
+                            )
 
                         print(
                             f"[{name}] runtime candidate "
                             f"classification: "
                             f"status=ok mode=shadow "
-                            f"observed={counts['observed']} "
+                            f"observed="
+                            f"{counts['observed']} "
+                            f"{candidate_message}"
                             f"observe_only="
                             f"{counts['observe_only']} "
-                            f"rejected={counts['rejected']} "
+                            f"rejected="
+                            f"{counts['rejected']} "
                             f"written="
                             f"{classification_result['written']} "
                             f"dry_run={dry_run}"
                         )
 
                     else:
-                        error = classification_result.get(
-                            "error"
+                        error = (
+                            classification_result.get(
+                                "error"
+                            )
                         )
 
                         message = (
                             f"[{name}] runtime candidate "
                             f"classification: "
-                            f"status={classification_status}"
+                            f"status="
+                            f"{classification_status}"
                         )
 
                         if error:
-                            message += f" error={error}"
+                            message += (
+                                f" error={error}"
+                            )
 
                         print(message)
 

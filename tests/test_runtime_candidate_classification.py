@@ -97,6 +97,11 @@ class RuntimeCandidateClassificationTests(unittest.TestCase):
             "awaiting_classification_policy",
         )
 
+        self.assertNotIn(
+            "eligibility",
+            result,
+        )
+
         evidence = result["evidence"]
 
         self.assertTrue(evidence["feed_present"])
@@ -332,18 +337,19 @@ class RuntimeCandidateClassificationTests(unittest.TestCase):
             "promoted_exact",
         )
 
-    def test_shadow_decisions_do_not_include_promotion(
+    def test_shadow_decisions_include_candidate_only(
         self,
     ) -> None:
         self.assertEqual(
             SHADOW_DECISIONS,
             {
                 "observed",
+                "candidate",
                 "observe_only",
                 "rejected",
             },
         )
-        self.assertNotIn(
+        self.assertIn(
             "candidate",
             SHADOW_DECISIONS,
         )
@@ -354,6 +360,203 @@ class RuntimeCandidateClassificationTests(unittest.TestCase):
         self.assertNotIn(
             "promoted_exact",
             SHADOW_DECISIONS,
+        )
+
+    def test_eligibility_can_classify_candidate(
+        self,
+    ) -> None:
+        result = classify_runtime_candidate(
+            self.candidate(),
+            {"hosts": {}},
+            self.policy_disabled(),
+            self.now(),
+            candidate_eligibility_cfg={
+                "enabled": True,
+                "min_seen_days": 2,
+                "min_observation_count": 2,
+            },
+        )
+
+        self.assertEqual(
+            result["decision"],
+            "candidate",
+        )
+        self.assertEqual(
+            result["reason"],
+            "candidate_eligibility_met",
+        )
+        self.assertEqual(
+            result["eligibility"]["decision"],
+            "candidate",
+        )
+        self.assertEqual(
+            result["eligibility"]["evidence"][
+                "seen_days"
+            ],
+            2,
+        )
+
+    def test_policy_exclusion_overrides_candidate_eligibility(
+        self,
+    ) -> None:
+        result = classify_runtime_candidate(
+            self.candidate(),
+            {"hosts": {}},
+            self.policy_excluding_example(),
+            self.now(),
+            candidate_eligibility_cfg={
+                "enabled": True,
+                "min_seen_days": 2,
+                "min_observation_count": 2,
+            },
+            previous_decision="candidate",
+        )
+
+        self.assertEqual(
+            result["decision"],
+            "rejected",
+        )
+        self.assertEqual(
+            result["reason"],
+            "hostname_policy_excluded",
+        )
+        self.assertNotIn(
+            "eligibility",
+            result,
+        )
+
+    def test_exact_dns_overrides_previous_candidate(
+        self,
+    ) -> None:
+        result = classify_runtime_candidate(
+            self.candidate(),
+            {
+                "hosts": {
+                    "video.example.com": {
+                        "status": "active",
+                    }
+                }
+            },
+            self.policy_disabled(),
+            self.now(),
+            candidate_eligibility_cfg={
+                "enabled": True,
+            },
+            previous_decision="candidate",
+        )
+
+        self.assertEqual(
+            result["decision"],
+            "observe_only",
+        )
+        self.assertEqual(
+            result["reason"],
+            "exact_dns_existing",
+        )
+        self.assertNotIn(
+            "eligibility",
+            result,
+        )
+
+    def test_state_classifier_retains_previous_candidate(
+        self,
+    ) -> None:
+        candidate = self.candidate()
+        candidate["feed_present"] = False
+        candidate["current_presence"] = False
+        candidate["seen_dates"] = []
+        candidate["observation_count"] = 0
+
+        runtime_state = {
+            "schema_version": 1,
+            "service": "demo",
+            "candidates": {
+                candidate["candidate_id"]: candidate,
+            },
+        }
+
+        previous_snapshot = {
+            "version": 1,
+            "mode": "shadow",
+            "service": "demo",
+            "candidates": {
+                candidate["candidate_id"]: {
+                    "decision": "candidate",
+                }
+            },
+        }
+
+        result = classify_runtime_candidate_state(
+            runtime_state,
+            {"hosts": {}},
+            self.policy_disabled(),
+            self.now(),
+            candidate_eligibility_cfg={
+                "enabled": True,
+                "min_seen_days": 2,
+                "min_observation_count": 2,
+            },
+            previous_snapshot=previous_snapshot,
+        )
+
+        self.assertEqual(
+            result["counts"]["candidate"],
+            1,
+        )
+        self.assertEqual(
+            result["counts"]["observed"],
+            0,
+        )
+        self.assertEqual(
+            result["candidates"][
+                "candidate-1"
+            ]["decision"],
+            "candidate",
+        )
+        self.assertEqual(
+            result["candidates"][
+                "candidate-1"
+            ]["reason"],
+            "candidate_retained",
+        )
+
+    def test_default_off_state_preserves_legacy_counts(
+        self,
+    ) -> None:
+        candidate = self.candidate()
+
+        runtime_state = {
+            "schema_version": 1,
+            "service": "demo",
+            "candidates": {
+                candidate["candidate_id"]: candidate,
+            },
+        }
+
+        result = classify_runtime_candidate_state(
+            runtime_state,
+            {"hosts": {}},
+            self.policy_disabled(),
+            self.now(),
+        )
+
+        self.assertEqual(
+            result["counts"],
+            {
+                "observed": 1,
+                "observe_only": 0,
+                "rejected": 0,
+            },
+        )
+        self.assertNotIn(
+            "candidate",
+            result["counts"],
+        )
+        self.assertNotIn(
+            "eligibility",
+            result["candidates"][
+                "candidate-1"
+            ],
         )
 
     def test_classifier_does_not_mutate_inputs(
