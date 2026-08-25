@@ -9,6 +9,11 @@ from .runtime_candidate_eligibility import (
     candidate_eligibility_settings,
     evaluate_candidate_eligibility,
 )
+from .runtime_candidate_maturity import (
+    candidate_maturity_settings,
+    evaluate_candidate_maturity,
+    validate_candidate_maturity_history,
+)
 from .utils import (
     iso,
     load_json,
@@ -159,6 +164,17 @@ def _normalized_eligibility_settings(
     )
 
 
+def _normalized_maturity_settings(
+    raw: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+
+    return candidate_maturity_settings(
+        raw
+    )
+
+
 def _validate_previous_snapshot(
     runtime_state: dict[str, Any],
     previous_snapshot: dict[str, Any],
@@ -263,6 +279,21 @@ def _validate_previous_snapshot(
                 f"is unsupported: {decision}"
             )
 
+        maturity = result.get(
+            "maturity"
+        )
+
+        if maturity is not None:
+            if decision != "candidate":
+                raise ValueError(
+                    "Previous Candidate Maturity "
+                    "requires candidate decision"
+                )
+
+            validate_candidate_maturity_history(
+                maturity
+            )
+
     return candidates
 
 
@@ -289,12 +320,19 @@ def classify_runtime_candidate(
     candidate_eligibility_cfg: (
         dict[str, Any] | None
     ) = None,
+    candidate_maturity_cfg: (
+        dict[str, Any] | None
+    ) = None,
     previous_decision: str | None = None,
+    previous_maturity: (
+        dict[str, Any] | None
+    ) = None,
 ) -> dict[str, Any]:
     """
     Classify one Runtime Candidate in shadow mode.
 
     Runtime evidence is informational only.
+    Candidate Maturity is also shadow-only.
     This function cannot promote a Runtime Candidate
     into Exact DNS and does not mutate either input
     state.
@@ -326,9 +364,24 @@ def classify_runtime_candidate(
             "must be an object"
         )
 
+    if (
+        previous_maturity is not None
+        and previous_decision != "candidate"
+    ):
+        raise ValueError(
+            "Previous Candidate Maturity "
+            "requires previous candidate decision"
+        )
+
     normalized_eligibility_cfg = (
         _normalized_eligibility_settings(
             candidate_eligibility_cfg
+        )
+    )
+
+    normalized_maturity_cfg = (
+        _normalized_maturity_settings(
+            candidate_maturity_cfg
         )
     )
 
@@ -483,6 +536,34 @@ def classify_runtime_candidate(
             eligibility
         )
 
+    if decision == "candidate":
+        maturity_enabled = (
+            normalized_maturity_cfg
+            is not None
+            and normalized_maturity_cfg[
+                "enabled"
+            ]
+        )
+
+        maturity_active = (
+            maturity_enabled
+            or previous_maturity is not None
+        )
+
+        if maturity_active:
+            result["maturity"] = (
+                evaluate_candidate_maturity(
+                    candidate,
+                    now,
+                    previous_maturity=(
+                        previous_maturity
+                    ),
+                    settings=(
+                        normalized_maturity_cfg
+                    ),
+                )
+            )
+
     return result
 
 
@@ -493,6 +574,9 @@ def classify_runtime_candidate_state(
     now: datetime,
     *,
     candidate_eligibility_cfg: (
+        dict[str, Any] | None
+    ) = None,
+    candidate_maturity_cfg: (
         dict[str, Any] | None
     ) = None,
     previous_snapshot: (
@@ -529,6 +613,12 @@ def classify_runtime_candidate_state(
     normalized_eligibility_cfg = (
         _normalized_eligibility_settings(
             candidate_eligibility_cfg
+        )
+    )
+
+    normalized_maturity_cfg = (
+        _normalized_maturity_settings(
+            candidate_maturity_cfg
         )
     )
 
@@ -614,6 +704,7 @@ def classify_runtime_candidate_state(
             )
 
         previous_decision = None
+        previous_maturity = None
 
         previous_result = (
             previous_candidates.get(
@@ -628,6 +719,12 @@ def classify_runtime_candidate_state(
                 ]
             )
 
+            previous_maturity = (
+                previous_result.get(
+                    "maturity"
+                )
+            )
+
         result = classify_runtime_candidate(
             candidate,
             dns_state,
@@ -636,8 +733,14 @@ def classify_runtime_candidate_state(
             candidate_eligibility_cfg=(
                 normalized_eligibility_cfg
             ),
+            candidate_maturity_cfg=(
+                normalized_maturity_cfg
+            ),
             previous_decision=(
                 previous_decision
+            ),
+            previous_maturity=(
+                previous_maturity
             ),
         )
 
@@ -707,6 +810,9 @@ def write_runtime_candidate_classification_snapshot(
     candidate_eligibility_cfg: (
         dict[str, Any] | None
     ) = None,
+    candidate_maturity_cfg: (
+        dict[str, Any] | None
+    ) = None,
 ) -> dict[str, Any]:
     """
     Compute and optionally persist a
@@ -717,8 +823,8 @@ def write_runtime_candidate_classification_snapshot(
     A malformed previous snapshot fails closed
     and is never overwritten.
 
-    Classification never writes to Runtime Candidate
-    state or Exact DNS state.
+    Classification and Candidate Maturity never
+    write to Runtime Candidate state or Exact DNS state.
     """
 
     previous_snapshot = None
@@ -748,6 +854,9 @@ def write_runtime_candidate_classification_snapshot(
                 now,
                 candidate_eligibility_cfg=(
                     candidate_eligibility_cfg
+                ),
+                candidate_maturity_cfg=(
+                    candidate_maturity_cfg
                 ),
                 previous_snapshot=(
                     previous_snapshot
