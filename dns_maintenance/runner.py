@@ -75,7 +75,6 @@ def run(repo_root: Path, cfg: dict[str, Any], selected: set[str] | None, dry_run
                 )
 
         discovery_cfg = discovery_settings(collection)
-        discovery_cfg = discovery_settings(collection)
         candidates, discovery_state, _ = discover(name, paths, discovery_cfg, now, dry_run)
         dns_state, _ = maintain_dns(name, paths, dns_settings(cfg, collection), now, candidates, dry_run)
         policy_cfg = hostname_policy_settings(collection)
