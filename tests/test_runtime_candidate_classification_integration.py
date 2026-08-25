@@ -12,6 +12,7 @@ from unittest.mock import patch
 from dns_maintenance.config import (
     collection_paths,
     runtime_candidate_classification_settings,
+    runtime_candidate_eligibility_settings,
 )
 from dns_maintenance.runner import run
 from dns_maintenance.runtime_candidate_classification import (
@@ -134,6 +135,130 @@ class RuntimeCandidateClassificationConfigTests(
             "classification.enabled must be boolean",
         ):
             runtime_candidate_classification_settings(
+                collection
+            )
+
+    def test_candidate_eligibility_is_disabled_by_default(
+        self,
+    ):
+        self.assertEqual(
+            runtime_candidate_eligibility_settings(
+                self.collection()
+            ),
+            {
+                "enabled": False,
+                "min_seen_days": 2,
+                "min_observation_count": 2,
+            },
+        )
+
+    def test_candidate_eligibility_can_be_enabled(
+        self,
+    ):
+        collection = self.collection()
+        collection["runtime_candidate"] = {
+            "enabled": True,
+            "classification": {
+                "enabled": True,
+                "candidate_eligibility": {
+                    "enabled": True,
+                    "min_seen_days": 3,
+                    "min_observation_count": 4,
+                },
+            },
+        }
+
+        self.assertEqual(
+            runtime_candidate_eligibility_settings(
+                collection
+            ),
+            {
+                "enabled": True,
+                "min_seen_days": 3,
+                "min_observation_count": 4,
+            },
+        )
+
+    def test_candidate_eligibility_requires_classification(
+        self,
+    ):
+        collection = self.collection()
+        collection["runtime_candidate"] = {
+            "enabled": True,
+            "classification": {
+                "enabled": False,
+                "candidate_eligibility": {
+                    "enabled": True,
+                },
+            },
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires runtime_candidate.classification.enabled",
+        ):
+            runtime_candidate_eligibility_settings(
+                collection
+            )
+
+    def test_candidate_eligibility_invalid_thresholds_fail_closed(
+        self,
+    ):
+        invalid = (
+            {
+                "min_seen_days": 0,
+            },
+            {
+                "min_seen_days": True,
+            },
+            {
+                "min_observation_count": 0,
+            },
+            {
+                "min_observation_count": True,
+            },
+        )
+
+        for candidate_eligibility in invalid:
+            with self.subTest(
+                candidate_eligibility=candidate_eligibility
+            ):
+                collection = self.collection()
+                collection["runtime_candidate"] = {
+                    "enabled": True,
+                    "classification": {
+                        "enabled": True,
+                        "candidate_eligibility": (
+                            candidate_eligibility
+                        ),
+                    },
+                }
+
+                with self.assertRaises(ValueError):
+                    runtime_candidate_eligibility_settings(
+                        collection
+                    )
+
+    def test_candidate_eligibility_unknown_setting_fails_closed(
+        self,
+    ):
+        collection = self.collection()
+        collection["runtime_candidate"] = {
+            "enabled": True,
+            "classification": {
+                "enabled": True,
+                "candidate_eligibility": {
+                    "enabled": False,
+                    "magic_threshold": 42,
+                },
+            },
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Unknown candidate_eligibility",
+        ):
+            runtime_candidate_eligibility_settings(
                 collection
             )
 
