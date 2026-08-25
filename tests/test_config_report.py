@@ -50,7 +50,7 @@ class ConfigReportTests(unittest.TestCase):
             "runtime_candidate.enabled must be boolean",
         ):
             runtime_candidate_settings(collection)
-    
+
     def test_default_dns_thresholds_are_time_based(self):
         cfg = self.sample()
         s = dns_settings(cfg, cfg["collections"][0])
