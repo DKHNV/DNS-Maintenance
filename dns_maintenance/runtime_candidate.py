@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
 import uuid
+from datetime import datetime
 from typing import Any
 
-from .utils import normalize_hostname
+from .utils import iso, normalize_hostname
 
 
 FEED_SCHEMA_VERSION = 1
@@ -54,6 +56,22 @@ COUNTER_KEYS = {
     "active_cycles",
     "reactivation_count",
 }
+
+
+RUNTIME_METRIC_FIELDS = (
+    "first_observed",
+    "last_observed",
+    "current_presence",
+    "current_routing_status",
+    "observation_count",
+    "presence_cycles",
+    "active_cycles",
+    "reactivation_count",
+    "seen_dates",
+    "last_external_at",
+)
+
+RUNTIME_CANDIDATE_STATE_VERSION = 1
 
 
 def runtime_candidate_id(
@@ -249,3 +267,84 @@ def validate_runtime_candidate_feed(
         seen_hostnames.add(hostname)
 
     return feed
+
+
+def merge_runtime_candidate_state(
+    previous: Any,
+    feed: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    service = feed["service"]
+    observer_id = feed["observer_id"]
+    intake_at = iso(now)
+
+    if previous is None:
+        previous = {}
+
+    if not isinstance(previous, dict):
+        raise ValueError("Runtime Candidate state must be an object")
+
+    if previous:
+        if previous.get("schema_version") != RUNTIME_CANDIDATE_STATE_VERSION:
+            raise ValueError("unsupported Runtime Candidate state schema_version")
+
+        if previous.get("service") != service:
+            raise ValueError("Runtime Candidate state service mismatch")
+
+        previous_observer = previous.get("observer_id")
+        if previous_observer and previous_observer != observer_id:
+            raise ValueError("Runtime Candidate state observer_id mismatch")
+
+        if not isinstance(previous.get("candidates"), dict):
+            raise ValueError("Runtime Candidate state candidates must be an object")
+
+    state = copy.deepcopy(previous)
+
+    state["schema_version"] = RUNTIME_CANDIDATE_STATE_VERSION
+    state["service"] = service
+    state["observer_id"] = observer_id
+    state["source_content_hash"] = feed["content_hash"]
+    state["source_generated_at"] = feed["generated_at"]
+    state["last_intake_at"] = intake_at
+    state["last_intake_status"] = "ok"
+
+    candidates = state.setdefault("candidates", {})
+
+    for candidate_id, existing in candidates.items():
+        if not isinstance(existing, dict):
+            raise ValueError(
+                f"Runtime Candidate state entry is invalid: {candidate_id}"
+            )
+        existing["feed_present"] = False
+
+    for source in feed["candidates"]:
+        candidate_id = source["candidate_id"]
+        existing = candidates.get(candidate_id)
+
+        if existing is None:
+            existing = {
+                "candidate_id": candidate_id,
+                "hostname": source["hostname"],
+                "suffix": source["suffix"],
+                "state": "observed",
+                "first_intake_at": intake_at,
+            }
+            candidates[candidate_id] = existing
+        else:
+            if existing.get("candidate_id") != candidate_id:
+                raise ValueError("Runtime Candidate state candidate_id mismatch")
+            if existing.get("hostname") != source["hostname"]:
+                raise ValueError("Runtime Candidate state hostname mismatch")
+            if existing.get("suffix") != source["suffix"]:
+                raise ValueError("Runtime Candidate state suffix mismatch")
+
+            if not isinstance(existing.get("state"), str) or not existing["state"]:
+                raise ValueError("Runtime Candidate state candidate state is invalid")
+
+        existing["last_intake_at"] = intake_at
+        existing["feed_present"] = True
+
+        for field in RUNTIME_METRIC_FIELDS:
+            existing[field] = copy.deepcopy(source[field])
+
+    return state
