@@ -75,6 +75,7 @@ RUNTIME_METRIC_FIELDS = (
 RUNTIME_CANDIDATE_STATE_VERSION = 1
 RUNTIME_CANDIDATE_FEED_FILENAME = "Runtime_Candidate_Feed.json"
 
+
 def runtime_candidate_id(
     service: str,
     suffix: str,
