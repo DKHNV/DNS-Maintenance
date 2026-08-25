@@ -188,7 +188,7 @@ class RuntimeCandidateTests(unittest.TestCase):
             "candidate",
         )
 
-    def test_observer_change_is_rejected(self):
+    def test_observer_change_updates_current_source(self):
         feed = self.feed()
         state = merge_runtime_candidate_state(
             {},
@@ -196,18 +196,29 @@ class RuntimeCandidateTests(unittest.TestCase):
             self.now(),
         )
 
-        feed["observer_id"] = str(uuid.uuid4())
+        previous_candidate_id = feed["candidates"][0]["candidate_id"]
+
+        new_observer_id = str(uuid.uuid4())
+        feed["observer_id"] = new_observer_id
         self.rehash(feed)
 
-        with self.assertRaisesRegex(
-            ValueError,
-            "observer_id mismatch",
-        ):
-            merge_runtime_candidate_state(
-                state,
-                feed,
-                self.now(),
-            )
+        updated = merge_runtime_candidate_state(
+            state,
+            feed,
+            self.now(),
+        )
+
+        self.assertEqual(
+            updated["observer_id"],
+            new_observer_id,
+        )
+        self.assertIn(
+            previous_candidate_id,
+            updated["candidates"],
+        )
+        self.assertTrue(
+            updated["candidates"][previous_candidate_id]["feed_present"]
+        )
 
     def test_bad_existing_state_schema_is_rejected(self):
         feed = self.feed()
