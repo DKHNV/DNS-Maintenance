@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
@@ -282,6 +283,27 @@ class RuntimeCandidateClassificationConfigTests(
 class RuntimeCandidateClassificationPersistenceTests(
     unittest.TestCase
 ):
+    def policy_disabled(self) -> dict:
+        return {
+            "enabled": False,
+            "allow": [],
+            "exclude": [],
+        }
+
+    def eligibility_enabled(self) -> dict:
+        return {
+            "enabled": True,
+            "min_seen_days": 2,
+            "min_observation_count": 2,
+        }
+
+    def eligibility_disabled(self) -> dict:
+        return {
+            "enabled": False,
+            "min_seen_days": 2,
+            "min_observation_count": 2,
+        }
+
     def test_snapshot_is_written(self):
         with tempfile.TemporaryDirectory() as td:
             path = (
@@ -293,11 +315,7 @@ class RuntimeCandidateClassificationPersistenceTests(
                 write_runtime_candidate_classification_snapshot(
                     runtime_state(),
                     {"hosts": {}},
-                    {
-                        "enabled": False,
-                        "allow": [],
-                        "exclude": [],
-                    },
+                    self.policy_disabled(),
                     path,
                     False,
                     NOW,
@@ -345,11 +363,7 @@ class RuntimeCandidateClassificationPersistenceTests(
                 write_runtime_candidate_classification_snapshot(
                     runtime_state(),
                     {"hosts": {}},
-                    {
-                        "enabled": False,
-                        "allow": [],
-                        "exclude": [],
-                    },
+                    self.policy_disabled(),
                     path,
                     True,
                     NOW,
@@ -377,11 +391,7 @@ class RuntimeCandidateClassificationPersistenceTests(
                 write_runtime_candidate_classification_snapshot(
                     runtime_state(),
                     {"hosts": {}},
-                    {
-                        "enabled": False,
-                        "allow": [],
-                        "exclude": [],
-                    },
+                    self.policy_disabled(),
                     Path(
                         "/repo/dns/netflix/"
                         "runtime_candidate_classification.json"
@@ -402,6 +412,303 @@ class RuntimeCandidateClassificationPersistenceTests(
             "disk failed",
             result["error"],
         )
+
+    def test_explicit_disabled_eligibility_preserves_legacy_snapshot(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            path = (
+                Path(td)
+                / "runtime_candidate_classification.json"
+            )
+
+            result = (
+                write_runtime_candidate_classification_snapshot(
+                    runtime_state(),
+                    {"hosts": {}},
+                    self.policy_disabled(),
+                    path,
+                    False,
+                    NOW,
+                    candidate_eligibility_cfg=(
+                        self.eligibility_disabled()
+                    ),
+                )
+            )
+
+            self.assertEqual(
+                result["status"],
+                "ok",
+            )
+
+            snapshot = result["state"]
+
+            self.assertEqual(
+                snapshot["counts"],
+                {
+                    "observed": 1,
+                    "observe_only": 0,
+                    "rejected": 0,
+                },
+            )
+            self.assertNotIn(
+                "candidate",
+                snapshot["counts"],
+            )
+            self.assertNotIn(
+                "eligibility",
+                snapshot["candidates"]["candidate-1"],
+            )
+
+    def test_enabled_eligibility_writes_candidate(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            path = (
+                Path(td)
+                / "runtime_candidate_classification.json"
+            )
+
+            result = (
+                write_runtime_candidate_classification_snapshot(
+                    runtime_state(),
+                    {"hosts": {}},
+                    self.policy_disabled(),
+                    path,
+                    False,
+                    NOW,
+                    candidate_eligibility_cfg=(
+                        self.eligibility_enabled()
+                    ),
+                )
+            )
+
+            self.assertEqual(
+                result["status"],
+                "ok",
+            )
+            self.assertTrue(
+                result["written"],
+            )
+
+            snapshot = result["state"]
+
+            self.assertEqual(
+                snapshot["counts"],
+                {
+                    "observed": 0,
+                    "observe_only": 0,
+                    "rejected": 0,
+                    "candidate": 1,
+                },
+            )
+            self.assertEqual(
+                snapshot["candidates"][
+                    "candidate-1"
+                ]["decision"],
+                "candidate",
+            )
+            self.assertEqual(
+                snapshot["candidates"][
+                    "candidate-1"
+                ]["reason"],
+                "candidate_eligibility_met",
+            )
+
+    def test_previous_candidate_is_retained_when_feed_disappears(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            path = (
+                Path(td)
+                / "runtime_candidate_classification.json"
+            )
+
+            first = (
+                write_runtime_candidate_classification_snapshot(
+                    runtime_state(),
+                    {"hosts": {}},
+                    self.policy_disabled(),
+                    path,
+                    False,
+                    NOW,
+                    candidate_eligibility_cfg=(
+                        self.eligibility_enabled()
+                    ),
+                )
+            )
+
+            self.assertEqual(
+                first["status"],
+                "ok",
+            )
+            self.assertEqual(
+                first["state"]["candidates"][
+                    "candidate-1"
+                ]["decision"],
+                "candidate",
+            )
+
+            second_state = runtime_state()
+            candidate = second_state["candidates"][
+                "candidate-1"
+            ]
+
+            candidate["feed_present"] = False
+            candidate["current_presence"] = False
+            candidate["seen_dates"] = []
+            candidate["observation_count"] = 0
+
+            second = (
+                write_runtime_candidate_classification_snapshot(
+                    second_state,
+                    {"hosts": {}},
+                    self.policy_disabled(),
+                    path,
+                    False,
+                    NOW,
+                    candidate_eligibility_cfg=(
+                        self.eligibility_disabled()
+                    ),
+                )
+            )
+
+            self.assertEqual(
+                second["status"],
+                "ok",
+            )
+            self.assertEqual(
+                second["state"]["counts"]["candidate"],
+                1,
+            )
+            self.assertEqual(
+                second["state"]["candidates"][
+                    "candidate-1"
+                ]["decision"],
+                "candidate",
+            )
+            self.assertEqual(
+                second["state"]["candidates"][
+                    "candidate-1"
+                ]["reason"],
+                "candidate_retained",
+            )
+
+    def test_malformed_previous_snapshot_is_preserved(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            path = (
+                Path(td)
+                / "runtime_candidate_classification.json"
+            )
+
+            malformed = "{not-valid-json\n"
+
+            path.write_text(
+                malformed,
+                encoding="utf-8",
+            )
+
+            result = (
+                write_runtime_candidate_classification_snapshot(
+                    runtime_state(),
+                    {"hosts": {}},
+                    self.policy_disabled(),
+                    path,
+                    False,
+                    NOW,
+                    candidate_eligibility_cfg=(
+                        self.eligibility_enabled()
+                    ),
+                )
+            )
+
+            self.assertEqual(
+                result["status"],
+                "state_error",
+            )
+            self.assertFalse(
+                result["written"],
+            )
+            self.assertIsNone(
+                result["state"],
+            )
+            self.assertEqual(
+                path.read_text(
+                    encoding="utf-8"
+                ),
+                malformed,
+            )
+
+    def test_unsupported_previous_decision_is_preserved(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            path = (
+                Path(td)
+                / "runtime_candidate_classification.json"
+            )
+
+            previous = {
+                "version": 1,
+                "mode": "shadow",
+                "service": "netflix",
+                "candidates": {
+                    "candidate-1": {
+                        "decision": "promoted_exact",
+                    }
+                },
+            }
+
+            original = (
+                json.dumps(
+                    previous,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+
+            path.write_text(
+                original,
+                encoding="utf-8",
+            )
+
+            result = (
+                write_runtime_candidate_classification_snapshot(
+                    runtime_state(),
+                    {"hosts": {}},
+                    self.policy_disabled(),
+                    path,
+                    False,
+                    NOW,
+                    candidate_eligibility_cfg=(
+                        self.eligibility_enabled()
+                    ),
+                )
+            )
+
+            self.assertEqual(
+                result["status"],
+                "state_error",
+            )
+            self.assertFalse(
+                result["written"],
+            )
+            self.assertIsNone(
+                result["state"],
+            )
+            self.assertIn(
+                "unsupported",
+                result["error"],
+            )
+            self.assertEqual(
+                path.read_text(
+                    encoding="utf-8"
+                ),
+                original,
+            )
 
 
 class RuntimeCandidateClassificationRunnerTests(
