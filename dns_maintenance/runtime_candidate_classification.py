@@ -203,6 +203,7 @@ def classify_runtime_candidate(
         "decision": decision,
         "reason": reason,
         "policy_reason": policy_decision.reason,
+        "eligibility": eligibility,
         "evidence": evidence,
     }
 
@@ -212,6 +213,9 @@ def classify_runtime_candidate_state(
     dns_state: dict[str, Any],
     hostname_policy_cfg: dict[str, Any],
     now: datetime,
+    *,
+    candidate_eligibility_cfg: dict[str, Any] | None = None,
+    previous_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Produce a read-only shadow-classification snapshot.
@@ -229,9 +233,35 @@ def classify_runtime_candidate_state(
             "Runtime Candidate state candidates must be an object"
         )
 
+    previous_candidates: dict[str, Any] = {}
+
+    if previous_snapshot is not None:
+        if not isinstance(previous_snapshot, dict):
+            raise ValueError(
+                "Previous Runtime Candidate classification "
+                "snapshot must be an object"
+            )
+
+        raw_previous_candidates = previous_snapshot.get(
+            "candidates"
+        )
+
+        if not isinstance(
+            raw_previous_candidates,
+            dict,
+        ):
+            raise ValueError(
+                "Previous Runtime Candidate classification "
+                "candidates must be an object"
+            )
+
+        previous_candidates = raw_previous_candidates
+
     classified: dict[str, dict[str, Any]] = {}
+
     counts = {
         "observed": 0,
+        "candidate": 0,
         "observe_only": 0,
         "rejected": 0,
     }
@@ -254,11 +284,40 @@ def classify_runtime_candidate_state(
                 "Runtime Candidate state candidate_id mismatch"
             )
 
+        previous_decision = None
+        previous_result = previous_candidates.get(
+            candidate_id
+        )
+
+        if previous_result is not None:
+            if not isinstance(previous_result, dict):
+                raise ValueError(
+                    "Previous Runtime Candidate "
+                    "classification entry must be an object"
+                )
+
+            previous_decision = previous_result.get(
+                "decision"
+            )
+
+            if not isinstance(
+                previous_decision,
+                str,
+            ):
+                raise ValueError(
+                    "Previous Runtime Candidate "
+                    "classification decision must be a string"
+                )
+
         result = classify_runtime_candidate(
             candidate,
             dns_state,
             hostname_policy_cfg,
             now,
+            candidate_eligibility_cfg=(
+                candidate_eligibility_cfg
+            ),
+            previous_decision=previous_decision,
         )
 
         decision = result["decision"]
