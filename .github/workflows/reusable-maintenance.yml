@@ -6,7 +6,7 @@ on:
       config_path:
         description: "Config path in the caller repository"
         required: false
-        default: "dns-maintenance.json"
+        default: "dns-maintenance-v1.json"
         type: string
       collection:
         description: "Collection name; empty means all collections"
