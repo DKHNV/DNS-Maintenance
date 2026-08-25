@@ -272,7 +272,7 @@ def classify_runtime_candidate_state(
 
     classified: dict[str, dict[str, Any]] = {}
 
-        eligibility_active = (
+    eligibility_active = (
         candidate_eligibility_cfg is not None
         or previous_snapshot is not None
     )
