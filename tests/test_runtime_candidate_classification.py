@@ -332,29 +332,33 @@ class RuntimeCandidateClassificationTests(unittest.TestCase):
             "promoted_exact",
         )
 
-    def test_shadow_decisions_do_not_include_promotion(
-        self,
+    def test_shadow_decisions_include_candidate_only(
+    self,
     ) -> None:
         self.assertEqual(
             SHADOW_DECISIONS,
             {
                 "observed",
+                "candidate",
                 "observe_only",
                 "rejected",
             },
         )
-        self.assertNotIn(
-            "candidate",
-            SHADOW_DECISIONS,
-        )
-        self.assertNotIn(
-            "covered_by_suffix",
-            SHADOW_DECISIONS,
-        )
-        self.assertNotIn(
-            "promoted_exact",
-            SHADOW_DECISIONS,
-        )
+
+    self.assertIn(
+        "candidate",
+        SHADOW_DECISIONS,
+    )
+
+    self.assertNotIn(
+        "covered_by_suffix",
+        SHADOW_DECISIONS,
+    )
+
+    self.assertNotIn(
+        "promoted_exact",
+        SHADOW_DECISIONS,
+    )
 
     def test_classifier_does_not_mutate_inputs(
         self,
