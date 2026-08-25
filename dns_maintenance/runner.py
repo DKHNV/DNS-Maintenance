@@ -214,22 +214,54 @@ def run(
 
             else:
                 try:
-                    classification_result = (
-                        write_runtime_candidate_classification_snapshot(
-                            runtime_candidate_state,
-                            dns_state,
-                            policy_cfg,
-                            paths.runtime_candidate_classification,
-                            dry_run,
-                            now,
-                            candidate_eligibility_cfg=(
-                                runtime_eligibility_cfg
-                            ),
-                            candidate_maturity_cfg=(
-                                runtime_maturity_cfg
-                            ),
+                    if runtime_maturity_cfg[
+                        "enabled"
+                    ]:
+                        classification_result = (
+                            write_runtime_candidate_classification_snapshot(
+                                runtime_candidate_state,
+                                dns_state,
+                                policy_cfg,
+                                paths.runtime_candidate_classification,
+                                dry_run,
+                                now,
+                                candidate_eligibility_cfg=(
+                                    runtime_eligibility_cfg
+                                ),
+                                candidate_maturity_cfg=(
+                                    runtime_maturity_cfg
+                                ),
+                            )
                         )
-                    )
+
+                    elif runtime_eligibility_cfg[
+                        "enabled"
+                    ]:
+                        classification_result = (
+                            write_runtime_candidate_classification_snapshot(
+                                runtime_candidate_state,
+                                dns_state,
+                                policy_cfg,
+                                paths.runtime_candidate_classification,
+                                dry_run,
+                                now,
+                                candidate_eligibility_cfg=(
+                                    runtime_eligibility_cfg
+                                ),
+                            )
+                        )
+
+                    else:
+                        classification_result = (
+                            write_runtime_candidate_classification_snapshot(
+                                runtime_candidate_state,
+                                dns_state,
+                                policy_cfg,
+                                paths.runtime_candidate_classification,
+                                dry_run,
+                                now,
+                            )
+                        )
 
                     classification_status = (
                         classification_result[
