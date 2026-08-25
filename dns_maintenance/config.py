@@ -188,7 +188,7 @@ def runtime_candidate_settings(collection: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(result["enabled"], bool):
         raise ValueError("runtime_candidate.enabled must be boolean")
 
-    return result    
+    return result
 
 
 def hostname_policy_settings(collection: dict[str, Any]) -> dict[str, Any]:
