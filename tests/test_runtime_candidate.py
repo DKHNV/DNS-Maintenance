@@ -260,7 +260,7 @@ class RuntimeCandidateTests(unittest.TestCase):
         )
 
         self.assertEqual(previous, snapshot)
-    
+
     def feed(self, service="netflix"):
         feed = {
             "schema_version": 1,
@@ -445,6 +445,7 @@ class RuntimeCandidateTests(unittest.TestCase):
                 feed,
                 "netflix",
             )
+
     def test_intake_writes_valid_feed_state(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
