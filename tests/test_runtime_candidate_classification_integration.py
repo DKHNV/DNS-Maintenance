@@ -733,11 +733,22 @@ class RuntimeCandidateClassificationRunnerTests(
             ),
         )
 
+    def eligibility_cfg(
+        self,
+        enabled: bool,
+    ) -> dict:
+        return {
+            "enabled": enabled,
+            "min_seen_days": 2,
+            "min_observation_count": 2,
+        }
+
     def run_case(
         self,
         *,
         classification_enabled: bool,
         intake_result: dict | None,
+        eligibility_enabled: bool = False,
         classification_result: dict | None = None,
         classification_side_effect=None,
         dry_run: bool = False,
@@ -770,6 +781,10 @@ class RuntimeCandidateClassificationRunnerTests(
             "allow": [],
             "exclude": [],
         }
+
+        eligibility_cfg = self.eligibility_cfg(
+            eligibility_enabled
+        )
 
         with ExitStack() as stack:
             stack.enter_context(
@@ -808,6 +823,14 @@ class RuntimeCandidateClassificationRunnerTests(
                     return_value={
                         "enabled": classification_enabled
                     },
+                )
+            )
+
+            eligibility_settings = stack.enter_context(
+                patch(
+                    "dns_maintenance.runner."
+                    "runtime_candidate_eligibility_settings",
+                    return_value=eligibility_cfg,
                 )
             )
 
@@ -928,6 +951,8 @@ class RuntimeCandidateClassificationRunnerTests(
             "apply_policy": apply_policy,
             "classify": classify,
             "probe": probe,
+            "eligibility_settings": eligibility_settings,
+            "eligibility_cfg": eligibility_cfg,
             "discovered_candidates": discovered_candidates,
             "dns_after_policy": dns_after_policy,
             "policy_cfg": policy_cfg,
@@ -951,6 +976,21 @@ class RuntimeCandidateClassificationRunnerTests(
                 "counts": {
                     "observed": 0,
                     "observe_only": 1,
+                    "rejected": 0,
+                }
+            },
+        }
+
+    def candidate_classification(self):
+        return {
+            "status": "ok",
+            "written": True,
+            "dry_run": False,
+            "state": {
+                "counts": {
+                    "observed": 0,
+                    "candidate": 1,
+                    "observe_only": 0,
                     "rejected": 0,
                 }
             },
@@ -999,6 +1039,47 @@ class RuntimeCandidateClassificationRunnerTests(
 
         self.assertIn(
             "observe_only=1",
+            result["output"],
+        )
+
+        self.assertNotIn(
+            "candidate=",
+            result["output"],
+        )
+
+    def test_enabled_eligibility_is_forwarded_to_writer(
+        self,
+    ):
+        intake_state = runtime_state()
+
+        result = self.run_case(
+            classification_enabled=True,
+            eligibility_enabled=True,
+            intake_result={
+                "status": "ok",
+                "written": True,
+                "dry_run": False,
+                "state": intake_state,
+            },
+            classification_result=(
+                self.candidate_classification()
+            ),
+        )
+
+        result["classify"].assert_called_once_with(
+            intake_state,
+            result["dns_after_policy"],
+            result["policy_cfg"],
+            self.paths.runtime_candidate_classification,
+            False,
+            NOW,
+            candidate_eligibility_cfg=(
+                result["eligibility_cfg"]
+            ),
+        )
+
+        self.assertIn(
+            "candidate=1",
             result["output"],
         )
 
@@ -1078,6 +1159,39 @@ class RuntimeCandidateClassificationRunnerTests(
 
         result["probe"].assert_called_once()
 
+    def test_classification_state_error_does_not_stop_pipeline(
+        self,
+    ):
+        result = self.run_case(
+            classification_enabled=True,
+            eligibility_enabled=True,
+            intake_result=self.ok_intake(),
+            classification_result={
+                "status": "state_error",
+                "written": False,
+                "dry_run": False,
+                "state": None,
+                "error": "previous snapshot invalid",
+            },
+        )
+
+        self.assertEqual(
+            result["result"],
+            0,
+        )
+
+        self.assertIn(
+            "classification: status=state_error",
+            result["output"],
+        )
+
+        self.assertIn(
+            "previous snapshot invalid",
+            result["output"],
+        )
+
+        result["probe"].assert_called_once()
+
     def test_dry_run_is_forwarded_to_classification(self):
         intake_state = runtime_state()
 
@@ -1114,8 +1228,11 @@ class RuntimeCandidateClassificationRunnerTests(
     ):
         result = self.run_case(
             classification_enabled=True,
+            eligibility_enabled=True,
             intake_result=self.ok_intake(),
-            classification_result=self.ok_classification(),
+            classification_result=(
+                self.candidate_classification()
+            ),
         )
 
         maintain_candidates = (
