@@ -217,6 +217,12 @@ def validate_runtime_candidate_feed(
     if not isinstance(feed, dict):
         raise ValueError("Runtime Candidate Feed must be an object")
 
+    forbidden = _contains_forbidden_routing_key(feed)
+    if forbidden:
+        raise ValueError(
+            f"Runtime Candidate Feed contains forbidden routing key: {forbidden}"
+        )
+
     if type(feed.get("schema_version")) is not int:
         raise ValueError("schema_version must be integer")
     if feed["schema_version"] != FEED_SCHEMA_VERSION:
