@@ -35,6 +35,7 @@ class CollectionPaths:
     expired: Path
     excluded: Path
     state: Path
+    runtime_candidate_state: Path
     discovery_state: Path
     service_state: Path
     service_alive: Path
@@ -70,6 +71,7 @@ def load_config(path: Path) -> dict[str, Any]:
         names.add(name)
         if not item.get("active_file") or not item.get("data_dir"):
             raise ValueError(f"Collection {name} requires active_file and data_dir")
+        runtime_candidate_settings(item)
         hostname_policy_settings(item)
     return cfg
 
@@ -172,6 +174,20 @@ def discovery_settings(collection: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"Invalid discovery root: {root!r}")
     return raw
 
+def runtime_candidate_settings(collection: dict[str, Any]) -> dict[str, Any]:
+    raw = collection.get("runtime_candidate")
+    if raw is None:
+        return {"enabled": False}
+    if not isinstance(raw, dict):
+        raise ValueError("runtime_candidate must be an object")
+
+    result = dict(raw)
+    result.setdefault("enabled", False)
+
+    if not isinstance(result["enabled"], bool):
+        raise ValueError("runtime_candidate.enabled must be boolean")
+
+    return result    
 
 def hostname_policy_settings(collection: dict[str, Any]) -> dict[str, Any]:
     raw = collection.get("hostname_policy", {}) if isinstance(collection.get("hostname_policy"), dict) else {}
@@ -233,6 +249,7 @@ def collection_paths(repo_root: Path, collection: dict[str, Any]) -> CollectionP
         expired=p("expired.txt"),
         excluded=p("excluded.txt"),
         state=p("state.json"),
+        runtime_candidate_state=p("runtime_candidate_state.json"),
         discovery_state=p("discovery_state.json"),
         service_state=p("service_state.json"),
         service_alive=p("service_alive.txt"),
