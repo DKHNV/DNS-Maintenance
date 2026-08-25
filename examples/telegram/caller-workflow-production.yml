@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   maintain:
-    uses: uses: DKHNV/DNS-Maintenance/.github/workflows/reusable-maintenance.yml@ea6fbd1f4356fde7327338d57f78c84470c4f93b
+    uses: DKHNV/DNS-Maintenance/.github/workflows/reusable-maintenance.yml@ea6fbd1f4356fde7327338d57f78c84470c4f93b
     with:
       config_path: dns-maintenance-v1.json
       collection: telegram
