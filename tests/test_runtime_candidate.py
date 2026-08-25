@@ -425,3 +425,20 @@ class RuntimeCandidateTests(unittest.TestCase):
                     "forbidden routing key",
                 ):
                     validate_runtime_candidate_feed(feed, "netflix")
+
+    def test_forbidden_routing_keys_are_rejected_outside_candidates(self):
+        feed = self.feed()
+        feed["metadata"] = {
+            "nested": {
+                "network": "203.0.113.0/24",
+            }
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "forbidden routing key",
+        ):
+            validate_runtime_candidate_feed(
+                feed,
+                "netflix",
+            )
