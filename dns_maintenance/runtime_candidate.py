@@ -291,10 +291,6 @@ def merge_runtime_candidate_state(
         if previous.get("service") != service:
             raise ValueError("Runtime Candidate state service mismatch")
 
-        previous_observer = previous.get("observer_id")
-        if previous_observer and previous_observer != observer_id:
-            raise ValueError("Runtime Candidate state observer_id mismatch")
-
         if not isinstance(previous.get("candidates"), dict):
             raise ValueError("Runtime Candidate state candidates must be an object")
 
