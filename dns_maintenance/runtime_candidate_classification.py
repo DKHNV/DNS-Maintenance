@@ -183,29 +183,42 @@ def classify_runtime_candidate(
         reason = "exact_dns_existing"
 
     else:
-        eligibility = evaluate_candidate_eligibility(
-            candidate,
-            previous_decision=previous_decision,
-            settings=candidate_eligibility_cfg,
+        eligibility_enabled = (
+            candidate_eligibility_cfg is not None
+            or previous_decision == "candidate"
         )
-        decision = eligibility["decision"]
-        reason = eligibility["reason"]
+
+        if eligibility_enabled:
+            eligibility = evaluate_candidate_eligibility(
+                candidate,
+                previous_decision=previous_decision,
+                settings=candidate_eligibility_cfg,
+            )
+            decision = eligibility["decision"]
+            reason = eligibility["reason"]
+        else:
+            decision = "observed"
+            reason = "awaiting_classification_policy"
 
     if decision not in SHADOW_DECISIONS:
         raise RuntimeError(
             f"Unsupported shadow classification decision: {decision}"
         )
 
-    return {
+    result = {
         "version": CLASSIFICATION_VERSION,
         "mode": CLASSIFICATION_MODE,
         "classified_at": iso(now),
         "decision": decision,
         "reason": reason,
         "policy_reason": policy_decision.reason,
-        "eligibility": eligibility,
         "evidence": evidence,
     }
+
+    if eligibility is not None:
+        result["eligibility"] = eligibility
+
+    return result
 
 
 def classify_runtime_candidate_state(
@@ -259,12 +272,19 @@ def classify_runtime_candidate_state(
 
     classified: dict[str, dict[str, Any]] = {}
 
+        eligibility_active = (
+        candidate_eligibility_cfg is not None
+        or previous_snapshot is not None
+    )
+
     counts = {
         "observed": 0,
-        "candidate": 0,
         "observe_only": 0,
         "rejected": 0,
     }
+
+    if eligibility_active:
+        counts["candidate"] = 0
 
     for candidate_id, candidate in sorted(candidates.items()):
         if not isinstance(candidate_id, str) or not candidate_id:
