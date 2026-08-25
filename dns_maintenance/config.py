@@ -174,6 +174,7 @@ def discovery_settings(collection: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"Invalid discovery root: {root!r}")
     return raw
 
+
 def runtime_candidate_settings(collection: dict[str, Any]) -> dict[str, Any]:
     raw = collection.get("runtime_candidate")
     if raw is None:
@@ -188,6 +189,7 @@ def runtime_candidate_settings(collection: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("runtime_candidate.enabled must be boolean")
 
     return result    
+
 
 def hostname_policy_settings(collection: dict[str, Any]) -> dict[str, Any]:
     raw = collection.get("hostname_policy", {}) if isinstance(collection.get("hostname_policy"), dict) else {}
