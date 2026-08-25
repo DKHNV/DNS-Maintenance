@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from .policy import evaluate_hostname
+from .runtime_candidate_eligibility import (
+    evaluate_candidate_eligibility,
+)
 from .utils import iso, normalize_hostname, save_json
 
 
@@ -14,6 +17,7 @@ CLASSIFICATION_MODE = "shadow"
 SHADOW_DECISIONS = frozenset(
     {
         "observed",
+        "candidate",
         "observe_only",
         "rejected",
     }
@@ -101,6 +105,9 @@ def classify_runtime_candidate(
     dns_state: dict[str, Any],
     hostname_policy_cfg: dict[str, Any],
     now: datetime,
+    *,
+    candidate_eligibility_cfg: dict[str, Any] | None = None,
+    previous_decision: str | None = None,
 ) -> dict[str, Any]:
     """
     Classify one Runtime Candidate in shadow mode.
@@ -165,6 +172,8 @@ def classify_runtime_candidate(
         }
     )
 
+    eligibility = None
+
     if policy_decision.excluded:
         decision = "rejected"
         reason = "hostname_policy_excluded"
@@ -174,8 +183,13 @@ def classify_runtime_candidate(
         reason = "exact_dns_existing"
 
     else:
-        decision = "observed"
-        reason = "awaiting_classification_policy"
+        eligibility = evaluate_candidate_eligibility(
+            candidate,
+            previous_decision=previous_decision,
+            settings=candidate_eligibility_cfg,
+        )
+        decision = eligibility["decision"]
+        reason = eligibility["reason"]
 
     if decision not in SHADOW_DECISIONS:
         raise RuntimeError(
