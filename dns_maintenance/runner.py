@@ -11,6 +11,7 @@ from .config import (
     hostname_policy_settings,
     runtime_candidate_classification_settings,
     runtime_candidate_eligibility_settings,
+    runtime_candidate_exact_promotion_apply_settings,
     runtime_candidate_exact_promotion_settings,
     runtime_candidate_maturity_settings,
     runtime_candidate_settings,
@@ -23,6 +24,9 @@ from .report import write_report
 from .runtime_candidate import intake_runtime_candidate_feed
 from .runtime_candidate_classification import (
     write_runtime_candidate_classification_snapshot,
+)
+from .runtime_candidate_exact_promotion_apply import (
+    apply_exact_promotion_pending,
 )
 from .runtime_candidate_exact_promotion_state import (
     write_exact_promotion_snapshot,
@@ -71,6 +75,12 @@ def run(
             )
         )
 
+        runtime_exact_promotion_apply_cfg = (
+             runtime_candidate_exact_promotion_apply_settings(
+                collection
+            )
+        )
+
         runtime_candidate_state: (
             dict[str, Any] | None
         ) = None
@@ -79,8 +89,13 @@ def run(
             dict[str, Any] | None
         ) = None
 
+        runtime_candidate_exact_promotion_state: (
+            dict[str, Any] | None
+        ) = None
+        
         runtime_candidate_intake_status = "disabled"
         runtime_candidate_classification_status = "disabled"
+        runtime_candidate_exact_promotion_status = "disabled"
 
         if runtime_candidate_cfg["enabled"]:
             try:
@@ -488,13 +503,16 @@ def run(
                         f"classification: "
                         f"status=error error={exc}"
                     )
-
         if runtime_exact_promotion_cfg["enabled"]:
             if (
                 runtime_candidate_intake_status
                 != "ok"
                 or runtime_candidate_state is None
             ):
+                runtime_candidate_exact_promotion_status = (
+                    "skipped"
+                )
+
                 print(
                     f"[{name}] runtime candidate "
                     f"exact promotion: "
@@ -509,6 +527,10 @@ def run(
                 or runtime_candidate_classification_state
                 is None
             ):
+                runtime_candidate_exact_promotion_status = (
+                    "skipped"
+                )
+
                 print(
                     f"[{name}] runtime candidate "
                     f"exact promotion: "
@@ -540,12 +562,24 @@ def run(
                         ]
                     )
 
+                    runtime_candidate_exact_promotion_status = (
+                        promotion_status
+                    )
+
                     if promotion_status == "ok":
                         promotion_state = (
                             promotion_result.get(
                                 "state"
                             )
                         )
+
+                        if isinstance(
+                            promotion_state,
+                            dict,
+                        ):
+                            runtime_candidate_exact_promotion_state = (
+                                promotion_state
+                            )
 
                         promotion_counts = {
                             "hold": 0,
@@ -621,11 +655,195 @@ def run(
                         print(message)
 
                 except Exception as exc:
+                    runtime_candidate_exact_promotion_status = (
+                        "error"
+                    )
+
                     print(
                         f"[{name}] runtime candidate "
                         f"exact promotion: "
                         f"status=error error={exc}"
                     )
+
+        if runtime_exact_promotion_apply_cfg[
+            "enabled"
+        ]:
+            if (
+                runtime_candidate_intake_status
+                != "ok"
+                or runtime_candidate_state is None
+            ):
+                print(
+                    f"[{name}] runtime candidate "
+                    f"exact promotion apply: "
+                    f"status=skipped "
+                    f"reason=intake_"
+                    f"{runtime_candidate_intake_status}"
+                )
+
+            elif (
+                runtime_candidate_classification_status
+                != "ok"
+                or runtime_candidate_classification_state
+                is None
+            ):
+                print(
+                    f"[{name}] runtime candidate "
+                    f"exact promotion apply: "
+                    f"status=skipped "
+                    f"reason=classification_"
+                    f"{runtime_candidate_classification_status}"
+                )
+
+            elif (
+                runtime_candidate_exact_promotion_status
+                != "ok"
+            ):
+                print(
+                    f"[{name}] runtime candidate "
+                    f"exact promotion apply: "
+                    f"status=skipped "
+                    f"reason=promotion_"
+                    f"{runtime_candidate_exact_promotion_status}"
+                )
+
+            elif (
+                runtime_candidate_exact_promotion_state
+                is None
+            ):
+                print(
+                    f"[{name}] runtime candidate "
+                    f"exact promotion apply: "
+                    f"status=skipped "
+                    f"reason=promotion_state_unavailable"
+                )
+
+            else:
+                try:
+                    apply_result = (
+                        apply_exact_promotion_pending(
+                            runtime_candidate_state,
+                            runtime_candidate_classification_state,
+                            runtime_candidate_exact_promotion_state,
+                            dns_state,
+                            policy_cfg,
+                            paths.state,
+                            paths.pending,
+                            dry_run,
+                            now,
+                            settings=(
+                                runtime_exact_promotion_apply_cfg
+                            ),
+                        )
+                    )
+
+                    apply_status = (
+                        apply_result[
+                            "status"
+                        ]
+                    )
+
+                    if apply_status == "ok":
+                        apply_payload = (
+                            apply_result.get(
+                                "result"
+                            )
+                        )
+
+                        apply_counts = {
+                            "hold": 0,
+                            "created_pending": 0,
+                        }
+
+                        if isinstance(
+                            apply_payload,
+                            dict,
+                        ):
+                            raw_counts = (
+                                apply_payload.get(
+                                    "counts",
+                                    {},
+                                )
+                            )
+
+                            if isinstance(
+                                raw_counts,
+                                dict,
+                            ):
+                                for key in (
+                                    "hold",
+                                    "created_pending",
+                                ):
+                                    value = (
+                                        raw_counts.get(
+                                            key,
+                                            0,
+                                        )
+                                    )
+
+                                    if (
+                                        type(value)
+                                        is int
+                                    ):
+                                        apply_counts[
+                                            key
+                                        ] = value
+
+                            prospective_dns_state = (
+                                apply_payload.get(
+                                    "dns_state"
+                                )
+                            )
+
+                            if isinstance(
+                                prospective_dns_state,
+                                dict,
+                            ):
+                                dns_state = (
+                                    prospective_dns_state
+                                )
+
+                        print(
+                            f"[{name}] runtime candidate "
+                            f"exact promotion apply: "
+                            f"status=ok mode=apply "
+                            f"hold="
+                            f"{apply_counts['hold']} "
+                            f"created_pending="
+                            f"{apply_counts['created_pending']} "
+                            f"written="
+                            f"{apply_result['written']} "
+                            f"dry_run={dry_run}"
+                        )
+
+                    else:
+                        error = (
+                            apply_result.get(
+                                "error"
+                            )
+                        )
+
+                        message = (
+                            f"[{name}] runtime candidate "
+                            f"exact promotion apply: "
+                            f"status="
+                            f"{apply_status}"
+                        )
+
+                        if error:
+                            message += (
+                                f" error={error}"
+                            )
+
+                        print(message)
+
+                except Exception as exc:
+                    print(
+                        f"[{name}] runtime candidate "
+                        f"exact promotion apply: "
+                        f"status=error error={exc}"
+                    )
+
 
         service_cfg = service_settings(
             cfg,
