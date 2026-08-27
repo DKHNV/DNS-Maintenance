@@ -43,6 +43,7 @@ class CollectionPaths:
     state: Path
     runtime_candidate_state: Path
     runtime_candidate_classification: Path
+    runtime_candidate_exact_promotion: Path
     discovery_state: Path
     service_state: Path
     service_alive: Path
@@ -101,6 +102,7 @@ def load_config(path: Path) -> dict[str, Any]:
         runtime_candidate_classification_settings(item)
         runtime_candidate_eligibility_settings(item)
         runtime_candidate_maturity_settings(item)
+        runtime_candidate_exact_promotion_settings(item)
         hostname_policy_settings(item)
 
     return cfg
@@ -331,6 +333,112 @@ def runtime_candidate_maturity_settings(
             "candidate_maturity.enabled requires "
             "runtime_candidate.classification."
             "candidate_eligibility.enabled"
+        )
+
+    return result
+
+
+def runtime_candidate_exact_promotion_settings(
+    collection: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Validate Exact Promotion v1 configuration.
+
+    The import is intentionally local because
+    runtime_candidate_exact_promotion imports Hostname Policy,
+    while policy imports CollectionPaths from this module.
+    Keeping this import lazy avoids a config -> promotion ->
+    policy -> config import cycle.
+    """
+
+    from .runtime_candidate_exact_promotion import (
+        exact_promotion_settings as normalize_exact_promotion_settings,
+    )
+
+    runtime_cfg = collection.get(
+        "runtime_candidate"
+    )
+
+    if runtime_cfg is None:
+        return normalize_exact_promotion_settings(
+            None
+        )
+
+    if not isinstance(runtime_cfg, dict):
+        raise ValueError(
+            "runtime_candidate must be an object"
+        )
+
+    raw = runtime_cfg.get(
+        "exact_promotion"
+    )
+
+    result = normalize_exact_promotion_settings(
+        raw
+    )
+
+    runtime_enabled = runtime_candidate_settings(
+        collection
+    )["enabled"]
+
+    if (
+        result["enabled"]
+        and not runtime_enabled
+    ):
+        raise ValueError(
+            "runtime_candidate."
+            "exact_promotion.enabled requires "
+            "runtime_candidate.enabled"
+        )
+
+    classification_enabled = (
+        runtime_candidate_classification_settings(
+            collection
+        )["enabled"]
+    )
+
+    if (
+        result["enabled"]
+        and not classification_enabled
+    ):
+        raise ValueError(
+            "runtime_candidate."
+            "exact_promotion.enabled requires "
+            "runtime_candidate.classification.enabled"
+        )
+
+    eligibility_enabled = (
+        runtime_candidate_eligibility_settings(
+            collection
+        )["enabled"]
+    )
+
+    if (
+        result["enabled"]
+        and not eligibility_enabled
+    ):
+        raise ValueError(
+            "runtime_candidate."
+            "exact_promotion.enabled requires "
+            "runtime_candidate.classification."
+            "candidate_eligibility.enabled"
+        )
+
+    maturity_enabled = (
+        runtime_candidate_maturity_settings(
+            collection
+        )["enabled"]
+    )
+
+    if (
+        result["enabled"]
+        and not maturity_enabled
+    ):
+        raise ValueError(
+            "runtime_candidate."
+            "exact_promotion.enabled requires "
+            "runtime_candidate.classification."
+            "candidate_maturity.enabled"
         )
 
     return result
@@ -1001,6 +1109,9 @@ def collection_paths(
         ),
         runtime_candidate_classification=p(
             "runtime_candidate_classification.json"
+        ),
+        runtime_candidate_exact_promotion=p(
+            "runtime_candidate_exact_promotion.json"
         ),
         discovery_state=p(
             "discovery_state.json"
