@@ -43,6 +43,7 @@ class CollectionPaths:
     state: Path
     runtime_candidate_state: Path
     runtime_candidate_classification: Path
+    runtime_candidate_exact_promotion: Path
     discovery_state: Path
     service_state: Path
     service_alive: Path
@@ -52,133 +53,57 @@ class CollectionPaths:
     report: Path
 
 
-def _merge(
-    base: dict[str, Any],
-    override: Any,
-) -> dict[str, Any]:
+def _merge(base: dict[str, Any], override: Any) -> dict[str, Any]:
     result = dict(base)
-
-    if isinstance(
-        override,
-        dict,
-    ):
-        result.update(
-            override
-        )
-
+    if isinstance(override, dict):
+        result.update(override)
     return result
 
 
-def load_config(
-    path: Path,
-) -> dict[str, Any]:
-    cfg = load_json(
-        path,
-        None,
-    )
-
-    if not isinstance(
-        cfg,
-        dict,
-    ):
+def load_config(path: Path) -> dict[str, Any]:
+    cfg = load_json(path, None)
+    if not isinstance(cfg, dict):
+        raise ValueError("Config must be a JSON object")
+    if int(cfg.get("version", 1)) != 1:
+        raise ValueError("Unsupported config version")
+    collections = cfg.get("collections")
+    if not isinstance(collections, list) or not collections:
         raise ValueError(
-            "Config must be a JSON object"
-        )
-
-    if int(
-        cfg.get(
-            "version",
-            1,
-        )
-    ) != 1:
-        raise ValueError(
-            "Unsupported config version"
-        )
-
-    collections = cfg.get(
-        "collections"
-    )
-
-    if (
-        not isinstance(
-            collections,
-            list,
-        )
-        or not collections
-    ):
-        raise ValueError(
-            "Config must contain a "
-            "non-empty collections array"
+            "Config must contain a non-empty collections array"
         )
 
     names: set[str] = set()
 
     for item in collections:
-        if not isinstance(
-            item,
-            dict,
-        ):
+        if not isinstance(item, dict):
             raise ValueError(
-                "Each collection must "
-                "be an object"
+                "Each collection must be an object"
             )
 
-        name = str(
-            item.get(
-                "name",
-                "",
+        name = str(item.get("name", "")).strip()
+
+        if not name or name in names:
+            raise ValueError(
+                f"Invalid or duplicate collection name: {name!r}"
             )
-        ).strip()
+
+        names.add(name)
 
         if (
-            not name
-            or name in names
-        ):
-            raise ValueError(
-                "Invalid or duplicate "
-                f"collection name: {name!r}"
-            )
-
-        names.add(
-            name
-        )
-
-        if (
-            not item.get(
-                "active_file"
-            )
-            or not item.get(
-                "data_dir"
-            )
+            not item.get("active_file")
+            or not item.get("data_dir")
         ):
             raise ValueError(
                 f"Collection {name} requires "
                 "active_file and data_dir"
             )
 
-        runtime_candidate_settings(
-            item
-        )
-
-        runtime_candidate_classification_settings(
-            item
-        )
-
-        runtime_candidate_eligibility_settings(
-            item
-        )
-
-        runtime_candidate_maturity_settings(
-            item
-        )
-
-        runtime_candidate_exact_promotion_settings(
-            item
-        )
-
-        hostname_policy_settings(
-            item
-        )
+        runtime_candidate_settings(item)
+        runtime_candidate_classification_settings(item)
+        runtime_candidate_eligibility_settings(item)
+        runtime_candidate_maturity_settings(item)
+        runtime_candidate_exact_promotion_settings(item)
+        hostname_policy_settings(item)
 
     return cfg
 
@@ -187,9 +112,7 @@ def collections_for(
     cfg: dict[str, Any],
     selected: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    items = list(
-        cfg["collections"]
-    )
+    items = list(cfg["collections"])
 
     if not selected:
         return items
@@ -198,24 +121,18 @@ def collections_for(
         str(x["name"])
         for x in items
     }
-
-    unknown = (
-        selected
-        - available
-    )
+    unknown = selected - available
 
     if unknown:
         raise ValueError(
-            "Unknown collection(s): "
+            f"Unknown collection(s): "
             f"{', '.join(sorted(unknown))}"
         )
 
     return [
         x
         for x in items
-        if str(
-            x["name"]
-        ) in selected
+        if str(x["name"]) in selected
     ]
 
 
@@ -231,13 +148,9 @@ def runtime_candidate_classification_settings(
             "enabled": False,
         }
 
-    if not isinstance(
-        runtime_cfg,
-        dict,
-    ):
+    if not isinstance(runtime_cfg, dict):
         raise ValueError(
-            "runtime_candidate "
-            "must be an object"
+            "runtime_candidate must be an object"
         )
 
     raw = runtime_cfg.get(
@@ -249,19 +162,13 @@ def runtime_candidate_classification_settings(
             "enabled": False,
         }
 
-    if not isinstance(
-        raw,
-        dict,
-    ):
+    if not isinstance(raw, dict):
         raise ValueError(
             "runtime_candidate.classification "
             "must be an object"
         )
 
-    result = dict(
-        raw
-    )
-
+    result = dict(raw)
     result.setdefault(
         "enabled",
         False,
@@ -272,26 +179,21 @@ def runtime_candidate_classification_settings(
         bool,
     ):
         raise ValueError(
-            "runtime_candidate."
-            "classification.enabled "
+            "runtime_candidate.classification.enabled "
             "must be boolean"
         )
 
-    runtime_enabled = (
-        runtime_candidate_settings(
-            collection
-        )["enabled"]
-    )
+    runtime_enabled = runtime_candidate_settings(
+        collection
+    )["enabled"]
 
     if (
         result["enabled"]
         and not runtime_enabled
     ):
         raise ValueError(
-            "runtime_candidate."
-            "classification.enabled "
-            "requires "
-            "runtime_candidate.enabled"
+            "runtime_candidate.classification.enabled "
+            "requires runtime_candidate.enabled"
         )
 
     return result
@@ -305,25 +207,17 @@ def runtime_candidate_eligibility_settings(
     )
 
     if runtime_cfg is None:
-        return (
-            normalize_candidate_eligibility_settings(
-                None
-            )
+        return normalize_candidate_eligibility_settings(
+            None
         )
 
-    if not isinstance(
-        runtime_cfg,
-        dict,
-    ):
+    if not isinstance(runtime_cfg, dict):
         raise ValueError(
-            "runtime_candidate "
-            "must be an object"
+            "runtime_candidate must be an object"
         )
 
-    classification_cfg = (
-        runtime_cfg.get(
-            "classification"
-        )
+    classification_cfg = runtime_cfg.get(
+        "classification"
     )
 
     if classification_cfg is None:
@@ -335,21 +229,16 @@ def runtime_candidate_eligibility_settings(
             dict,
         ):
             raise ValueError(
-                "runtime_candidate."
-                "classification "
+                "runtime_candidate.classification "
                 "must be an object"
             )
 
-        raw = (
-            classification_cfg.get(
-                "candidate_eligibility"
-            )
+        raw = classification_cfg.get(
+            "candidate_eligibility"
         )
 
-    result = (
-        normalize_candidate_eligibility_settings(
-            raw
-        )
+    result = normalize_candidate_eligibility_settings(
+        raw
     )
 
     classification_enabled = (
@@ -363,12 +252,9 @@ def runtime_candidate_eligibility_settings(
         and not classification_enabled
     ):
         raise ValueError(
-            "runtime_candidate."
-            "classification."
-            "candidate_eligibility.enabled "
-            "requires "
-            "runtime_candidate."
-            "classification.enabled"
+            "runtime_candidate.classification."
+            "candidate_eligibility.enabled requires "
+            "runtime_candidate.classification.enabled"
         )
 
     return result
@@ -382,25 +268,17 @@ def runtime_candidate_maturity_settings(
     )
 
     if runtime_cfg is None:
-        return (
-            normalize_candidate_maturity_settings(
-                None
-            )
+        return normalize_candidate_maturity_settings(
+            None
         )
 
-    if not isinstance(
-        runtime_cfg,
-        dict,
-    ):
+    if not isinstance(runtime_cfg, dict):
         raise ValueError(
-            "runtime_candidate "
-            "must be an object"
+            "runtime_candidate must be an object"
         )
 
-    classification_cfg = (
-        runtime_cfg.get(
-            "classification"
-        )
+    classification_cfg = runtime_cfg.get(
+        "classification"
     )
 
     if classification_cfg is None:
@@ -412,21 +290,16 @@ def runtime_candidate_maturity_settings(
             dict,
         ):
             raise ValueError(
-                "runtime_candidate."
-                "classification "
+                "runtime_candidate.classification "
                 "must be an object"
             )
 
-        raw = (
-            classification_cfg.get(
-                "candidate_maturity"
-            )
+        raw = classification_cfg.get(
+            "candidate_maturity"
         )
 
-    result = (
-        normalize_candidate_maturity_settings(
-            raw
-        )
+    result = normalize_candidate_maturity_settings(
+        raw
     )
 
     classification_enabled = (
@@ -440,12 +313,9 @@ def runtime_candidate_maturity_settings(
         and not classification_enabled
     ):
         raise ValueError(
-            "runtime_candidate."
-            "classification."
-            "candidate_maturity.enabled "
-            "requires "
-            "runtime_candidate."
-            "classification.enabled"
+            "runtime_candidate.classification."
+            "candidate_maturity.enabled requires "
+            "runtime_candidate.classification.enabled"
         )
 
     eligibility_enabled = (
@@ -459,12 +329,9 @@ def runtime_candidate_maturity_settings(
         and not eligibility_enabled
     ):
         raise ValueError(
-            "runtime_candidate."
-            "classification."
-            "candidate_maturity.enabled "
-            "requires "
-            "runtime_candidate."
-            "classification."
+            "runtime_candidate.classification."
+            "candidate_maturity.enabled requires "
+            "runtime_candidate.classification."
             "candidate_eligibility.enabled"
         )
 
@@ -493,36 +360,30 @@ def runtime_candidate_exact_promotion_settings(
     )
 
     if runtime_cfg is None:
-        return (
-            normalize_exact_promotion_settings(
-                None
-            )
+        return normalize_exact_promotion_settings(
+            None
         )
 
-    if not isinstance(
-        runtime_cfg,
-        dict,
-    ):
+    if not isinstance(runtime_cfg, dict):
         raise ValueError(
-            "runtime_candidate "
-            "must be an object"
+            "runtime_candidate must be an object"
         )
 
     raw = runtime_cfg.get(
         "exact_promotion"
     )
 
-    result = (
-        normalize_exact_promotion_settings(
-            raw
-        )
+    result = normalize_exact_promotion_settings(
+        raw
     )
+
+    runtime_enabled = runtime_candidate_settings(
+        collection
+    )["enabled"]
 
     if (
         result["enabled"]
-        and not runtime_candidate_settings(
-            collection
-        )["enabled"]
+        and not runtime_enabled
     ):
         raise ValueError(
             "runtime_candidate."
@@ -543,8 +404,7 @@ def runtime_candidate_exact_promotion_settings(
         raise ValueError(
             "runtime_candidate."
             "exact_promotion.enabled requires "
-            "runtime_candidate."
-            "classification.enabled"
+            "runtime_candidate.classification.enabled"
         )
 
     eligibility_enabled = (
@@ -560,8 +420,7 @@ def runtime_candidate_exact_promotion_settings(
         raise ValueError(
             "runtime_candidate."
             "exact_promotion.enabled requires "
-            "runtime_candidate."
-            "classification."
+            "runtime_candidate.classification."
             "candidate_eligibility.enabled"
         )
 
@@ -578,8 +437,7 @@ def runtime_candidate_exact_promotion_settings(
         raise ValueError(
             "runtime_candidate."
             "exact_promotion.enabled requires "
-            "runtime_candidate."
-            "classification."
+            "runtime_candidate.classification."
             "candidate_maturity.enabled"
         )
 
@@ -591,14 +449,9 @@ def dns_settings(
     collection: dict[str, Any],
 ) -> DNSSettings:
     defaults = (
-        cfg.get(
-            "defaults",
-            {},
-        )
+        cfg.get("defaults", {})
         if isinstance(
-            cfg.get(
-                "defaults"
-            ),
+            cfg.get("defaults"),
             dict,
         )
         else {}
@@ -606,21 +459,14 @@ def dns_settings(
 
     raw = _merge(
         (
-            defaults.get(
-                "dns",
-                {},
-            )
+            defaults.get("dns", {})
             if isinstance(
-                defaults.get(
-                    "dns"
-                ),
+                defaults.get("dns"),
                 dict,
             )
             else {}
         ),
-        collection.get(
-            "dns"
-        ),
+        collection.get("dns"),
     )
 
     resolvers = tuple(
@@ -637,8 +483,7 @@ def dns_settings(
 
     if not resolvers:
         raise ValueError(
-            "At least one DNS resolver "
-            "is required"
+            "At least one DNS resolver is required"
         )
 
     for resolver in resolvers:
@@ -646,11 +491,9 @@ def dns_settings(
             ipaddress.ip_address(
                 resolver
             )
-
         except ValueError as exc:
             raise ValueError(
-                "Resolver must be "
-                "an IP address: "
+                "Resolver must be an IP address: "
                 f"{resolver}"
             ) from exc
 
@@ -721,9 +564,7 @@ def dns_settings(
     if not (
         1
         <= settings.negative_votes_required
-        <= len(
-            settings.resolvers
-        )
+        <= len(settings.resolvers)
     ):
         raise ValueError(
             "negative_votes_required "
@@ -731,19 +572,16 @@ def dns_settings(
         )
 
     if (
-        settings.suspect_after_hours
-        <= 0
+        settings.suspect_after_hours <= 0
         or settings.quarantine_after_hours
         < settings.suspect_after_hours
     ):
         raise ValueError(
-            "DNS time thresholds "
-            "are invalid"
+            "DNS time thresholds are invalid"
         )
 
     if (
-        settings.expire_after_hours
-        <= 0
+        settings.expire_after_hours <= 0
         or settings.negative_streak_max_gap_hours
         <= 0
     ):
@@ -770,10 +608,7 @@ def dns_settings(
             "must be >= suspect minimum"
         )
 
-    if (
-        settings.max_workers
-        < 1
-    ):
+    if settings.max_workers < 1:
         raise ValueError(
             "max_workers must be >= 1"
         )
@@ -786,14 +621,9 @@ def service_settings(
     collection: dict[str, Any],
 ) -> dict[str, Any]:
     defaults = (
-        cfg.get(
-            "defaults",
-            {},
-        )
+        cfg.get("defaults", {})
         if isinstance(
-            cfg.get(
-                "defaults"
-            ),
+            cfg.get("defaults"),
             dict,
         )
         else {}
@@ -824,84 +654,66 @@ def service_settings(
         "enabled",
         False,
     )
-
     raw.setdefault(
         "port",
         443,
     )
-
     raw.setdefault(
         "path",
         "/",
     )
-
     raw.setdefault(
         "timeout_seconds",
         4.0,
     )
-
     raw.setdefault(
         "max_workers",
         10,
     )
-
     raw.setdefault(
         "max_ipv4_per_host",
         3,
     )
-
     raw.setdefault(
         "suspect_after_hours",
         72.0,
     )
-
     raw.setdefault(
         "dead_after_hours",
         168.0,
     )
-
     raw.setdefault(
         "failure_streak_max_gap_hours",
         48.0,
     )
-
     raw.setdefault(
         "suspect_min_failure_observations",
         3,
     )
-
     raw.setdefault(
         "dead_min_failure_observations",
         7,
     )
-
     raw.setdefault(
         "history_days",
         14.0,
     )
-
     raw.setdefault(
         "history_max_entries",
         256,
     )
-
     raw.setdefault(
         "failure_log_limit",
         50,
     )
-
     raw.setdefault(
         "user_agent",
         "DKHNV-DNS-Maintenance/1.0",
     )
 
     if (
-        int(
-            raw["port"]
-        ) < 1
-        or int(
-            raw["port"]
-        ) > 65535
+        int(raw["port"]) < 1
+        or int(raw["port"]) > 65535
     ):
         raise ValueError(
             "service_check.port "
@@ -910,25 +722,18 @@ def service_settings(
 
     if (
         float(
-            raw[
-                "suspect_after_hours"
-            ]
+            raw["suspect_after_hours"]
         )
         <= 0
         or float(
-            raw[
-                "dead_after_hours"
-            ]
+            raw["dead_after_hours"]
         )
         < float(
-            raw[
-                "suspect_after_hours"
-            ]
+            raw["suspect_after_hours"]
         )
     ):
         raise ValueError(
-            "Service time thresholds "
-            "are invalid"
+            "Service time thresholds are invalid"
         )
 
     if (
@@ -944,27 +749,22 @@ def service_settings(
         )
     ):
         raise ValueError(
-            "Service observation "
-            "thresholds are invalid"
+            "Service observation thresholds "
+            "are invalid"
         )
 
     if (
         float(
-            raw[
-                "history_days"
-            ]
+            raw["history_days"]
         )
         <= 0
         or int(
-            raw[
-                "history_max_entries"
-            ]
+            raw["history_max_entries"]
         )
         < 1
     ):
         raise ValueError(
-            "Service history settings "
-            "are invalid"
+            "Service history settings are invalid"
         )
 
     return raw
@@ -987,15 +787,12 @@ def discovery_settings(
         else {}
     )
 
-    raw = dict(
-        raw
-    )
+    raw = dict(raw)
 
     raw.setdefault(
         "enabled",
         False,
     )
-
     raw.setdefault(
         "sources",
         [],
@@ -1009,27 +806,21 @@ def discovery_settings(
         )
     ):
         raise ValueError(
-            "discovery.sources "
-            "must be an array"
+            "discovery.sources must be an array"
         )
 
-    for source in raw[
-        "sources"
-    ]:
+    for source in raw["sources"]:
         if (
             not isinstance(
                 source,
                 dict,
             )
-            or source.get(
-                "type"
-            )
+            or source.get("type")
             != "certspotter"
         ):
             raise ValueError(
-                "v1 supports discovery "
-                "source type "
-                "'certspotter' only"
+                "v1 supports discovery source "
+                "type 'certspotter' only"
             )
 
         roots = source.get(
@@ -1045,15 +836,13 @@ def discovery_settings(
             or not roots
         ):
             raise ValueError(
-                "certspotter source "
-                "requires non-empty roots"
+                "certspotter source requires "
+                "non-empty roots"
             )
 
         for root in roots:
             if not normalize_hostname(
-                str(
-                    root
-                )
+                str(root)
             ):
                 raise ValueError(
                     "Invalid discovery root: "
@@ -1084,10 +873,7 @@ def runtime_candidate_settings(
             "must be an object"
         )
 
-    result = dict(
-        raw
-    )
-
+    result = dict(raw)
     result.setdefault(
         "enabled",
         False,
@@ -1122,20 +908,16 @@ def hostname_policy_settings(
         else {}
     )
 
-    result = dict(
-        raw
-    )
+    result = dict(raw)
 
     result.setdefault(
         "enabled",
         False,
     )
-
     result.setdefault(
         "allow",
         [],
     )
-
     result.setdefault(
         "exclude",
         [],
@@ -1156,9 +938,7 @@ def hostname_policy_settings(
         "allow",
         "exclude",
     ):
-        rules = result[
-            group
-        ]
+        rules = result[group]
 
         if not isinstance(
             rules,
@@ -1181,7 +961,7 @@ def hostname_policy_settings(
                 dict,
             ):
                 raise ValueError(
-                    "hostname_policy."
+                    f"hostname_policy."
                     f"{group}[{index}] "
                     "must be an object"
                 )
@@ -1198,7 +978,7 @@ def hostname_policy_settings(
                 "suffix",
             }:
                 raise ValueError(
-                    "hostname_policy."
+                    f"hostname_policy."
                     f"{group}[{index}].match "
                     "must be 'exact' or 'suffix'"
                 )
@@ -1214,15 +994,13 @@ def hostname_policy_settings(
 
             if not value:
                 raise ValueError(
-                    "hostname_policy."
+                    f"hostname_policy."
                     f"{group}[{index}] "
                     "has invalid hostname value"
                 )
 
             rule_id = str(
-                raw_rule.get(
-                    "id"
-                )
+                raw_rule.get("id")
                 or (
                     f"{group}:"
                     f"{match}:"
@@ -1232,12 +1010,11 @@ def hostname_policy_settings(
 
             if (
                 not rule_id
-                or rule_id
-                in seen_ids
+                or rule_id in seen_ids
             ):
                 raise ValueError(
-                    "Duplicate or empty "
-                    "hostname policy rule id: "
+                    "Duplicate or empty hostname "
+                    "policy rule id: "
                     f"{rule_id!r}"
                 )
 
@@ -1246,19 +1023,16 @@ def hostname_policy_settings(
             )
 
             reason = str(
-                raw_rule.get(
-                    "reason"
-                )
+                raw_rule.get("reason")
                 or ""
             ).strip()
 
             if (
-                group
-                == "exclude"
+                group == "exclude"
                 and not reason
             ):
                 raise ValueError(
-                    "hostname_policy."
+                    f"hostname_policy."
                     f"exclude[{index}] "
                     "requires a reason"
                 )
@@ -1284,21 +1058,15 @@ def collection_paths(
     collection: dict[str, Any],
 ) -> CollectionPaths:
     data_rel = str(
-        collection[
-            "data_dir"
-        ]
-    ).rstrip(
-        "/"
-    )
+        collection["data_dir"]
+    ).rstrip("/")
 
     data_dir = safe_path(
         repo_root,
         data_rel,
     )
 
-    def p(
-        name: str,
-    ) -> Path:
+    def p(name: str) -> Path:
         return safe_path(
             repo_root,
             f"{data_rel}/{name}",
@@ -1308,9 +1076,7 @@ def collection_paths(
         active=safe_path(
             repo_root,
             str(
-                collection[
-                    "active_file"
-                ]
+                collection["active_file"]
             ),
         ),
         data_dir=data_dir,
@@ -1343,6 +1109,9 @@ def collection_paths(
         ),
         runtime_candidate_classification=p(
             "runtime_candidate_classification.json"
+        ),
+        runtime_candidate_exact_promotion=p(
+            "runtime_candidate_exact_promotion.json"
         ),
         discovery_state=p(
             "discovery_state.json"
