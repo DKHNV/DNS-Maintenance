@@ -103,6 +103,7 @@ def load_config(path: Path) -> dict[str, Any]:
         runtime_candidate_eligibility_settings(item)
         runtime_candidate_maturity_settings(item)
         runtime_candidate_exact_promotion_settings(item)
+        runtime_candidate_exact_promotion_apply_settings(item)
         hostname_policy_settings(item)
 
     return cfg
@@ -439,6 +440,72 @@ def runtime_candidate_exact_promotion_settings(
             "exact_promotion.enabled requires "
             "runtime_candidate.classification."
             "candidate_maturity.enabled"
+        )
+
+    return result
+
+
+def runtime_candidate_exact_promotion_apply_settings(
+    collection: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Validate Exact Promotion Apply v1 configuration.
+
+    The import is intentionally local because the Apply module imports
+    dns_engine, while dns_engine imports configuration types from this
+    module. Keeping the import lazy avoids a config -> apply ->
+    dns_engine -> config import cycle.
+
+    Apply is disabled by default and may only be enabled when the
+    shadow Exact Promotion stage is enabled.
+    """
+
+    from .runtime_candidate_exact_promotion_apply import (
+        exact_promotion_apply_settings as normalize_exact_promotion_apply_settings,
+    )
+
+    runtime_cfg = collection.get(
+        "runtime_candidate"
+    )
+
+    if runtime_cfg is None:
+        return normalize_exact_promotion_apply_settings(
+            None
+        )
+
+    if not isinstance(
+        runtime_cfg,
+        dict,
+    ):
+        raise ValueError(
+            "runtime_candidate must be an object"
+        )
+
+    raw = runtime_cfg.get(
+        "exact_promotion_apply"
+    )
+
+    result = (
+        normalize_exact_promotion_apply_settings(
+            raw
+        )
+    )
+
+    promotion_enabled = (
+        runtime_candidate_exact_promotion_settings(
+            collection
+        )["enabled"]
+    )
+
+    if (
+        result["enabled"]
+        and not promotion_enabled
+    ):
+        raise ValueError(
+            "runtime_candidate."
+            "exact_promotion_apply.enabled requires "
+            "runtime_candidate."
+            "exact_promotion.enabled"
         )
 
     return result
