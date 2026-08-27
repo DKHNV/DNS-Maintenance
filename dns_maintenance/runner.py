@@ -503,8 +503,7 @@ def run(
                         f"classification: "
                         f"status=error error={exc}"
                     )
-
-                if runtime_exact_promotion_cfg["enabled"]:
+        if runtime_exact_promotion_cfg["enabled"]:
             if (
                 runtime_candidate_intake_status
                 != "ok"
