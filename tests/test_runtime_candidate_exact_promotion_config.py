@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from dns_maintenance.config import (
+    collection_paths,
     load_config,
     runtime_candidate_exact_promotion_settings,
 )
@@ -207,6 +208,24 @@ class RuntimeCandidateExactPromotionConfigTests(
         ):
             runtime_candidate_exact_promotion_settings(
                 collection
+            )
+
+    def test_exact_promotion_path_is_managed_data_path(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = collection_paths(
+                Path(tmp),
+                self.collection(),
+            )
+
+            self.assertTrue(
+                str(
+                    paths.runtime_candidate_exact_promotion
+                ).endswith(
+                    "dns/youtube/"
+                    "runtime_candidate_exact_promotion.json"
+                )
             )
 
     def test_load_config_validates_exact_promotion(
